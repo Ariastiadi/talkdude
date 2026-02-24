@@ -21,6 +21,11 @@ export interface Conversation {
   updatedAt: number;
   pinned?: number; // timestamp when pinned, 0 or undefined = not pinned
   archived?: boolean;
+  searchEnabled?: boolean;
+  urlContextEnabled?: boolean;
+  thinkingEnabled?: boolean;
+  thinkingBudget?: number;
+  thinkingLevel?: string;
 }
 
 export interface Message {

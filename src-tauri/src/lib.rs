@@ -92,7 +92,8 @@ pub fn run() {
                 builder = builder
                     .title("Lumi AI")
                     .inner_size(1024.0, 700.0)
-                    .min_inner_size(360.0, 480.0);
+                    .min_inner_size(360.0, 480.0)
+                    .visible(false);
             }
 
             // Override the default Android WebView User-Agent to remove the

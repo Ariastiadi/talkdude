@@ -5,7 +5,7 @@ import {
   TOKEN_EXPIRY_BUFFER_MS,
 } from "./constants";
 import { db, type AuthAccount } from "../db";
-import { getAccount } from "./oauth";
+import { getAccount, discoverProjectId } from "./oauth";
 import { platformFetch } from "../platform";
 
 /**
@@ -61,6 +61,12 @@ export async function refreshAccessToken(account: AuthAccount): Promise<AuthAcco
       refreshToken: payload.refresh_token ?? account.refreshToken,
       updatedAt: Date.now(),
     };
+
+    // Re-discover project ID with the fresh token to handle cluster migrations
+    const newProjectId = await discoverProjectId(payload.access_token);
+    if (newProjectId) {
+      updated.projectId = newProjectId;
+    }
 
     await db.auth.put(updated);
     return updated;

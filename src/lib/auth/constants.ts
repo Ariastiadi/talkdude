@@ -21,10 +21,25 @@ export const TOKEN_EXPIRY_BUFFER_MS = 60_000;
 
 // --- Endpoint ---
 
-export const ANTIGRAVITY_ENDPOINT = "https://cloudcode-pa.googleapis.com";
+export const ANTIGRAVITY_ENDPOINT_PROD = "https://cloudcode-pa.googleapis.com";
+export const ANTIGRAVITY_ENDPOINT_DAILY = "https://daily-cloudcode-pa.googleapis.com";
+export const ANTIGRAVITY_ENDPOINT_DAILY_SANDBOX = "https://daily-cloudcode-pa.sandbox.googleapis.com";
 export const ANTIGRAVITY_API_VERSION = "v1internal";
-
 export const ANTIGRAVITY_DEFAULT_PROJECT_ID = "rising-fact-p41fc";
+
+/** Endpoint fallback order for API requests. */
+export const ANTIGRAVITY_ENDPOINT_FALLBACKS = [
+  ANTIGRAVITY_ENDPOINT_DAILY,
+  ANTIGRAVITY_ENDPOINT_DAILY_SANDBOX,
+  ANTIGRAVITY_ENDPOINT_PROD,
+] as const;
+
+/** Endpoint order for project discovery. */
+export const ANTIGRAVITY_LOAD_ENDPOINTS = [
+  ANTIGRAVITY_ENDPOINT_PROD,
+  ANTIGRAVITY_ENDPOINT_DAILY,
+  ANTIGRAVITY_ENDPOINT_DAILY_SANDBOX,
+] as const;
 
 // --- Antigravity API Headers ---
 
@@ -32,6 +47,7 @@ export const ANTIGRAVITY_USER_AGENT = "google-api-nodejs-client/9.15.1";
 export const ANTIGRAVITY_API_CLIENT = "google-cloud-sdk vscode_cloudshelleditor/0.1";
 export const ANTIGRAVITY_CLIENT_METADATA =
   '{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}';
+
 
 // --- Lumi AI System Instruction ---
 

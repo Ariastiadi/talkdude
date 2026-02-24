@@ -69,6 +69,33 @@ function App() {
         document.addEventListener("contextmenu", (e) => e.preventDefault());
       }
     }
+
+    // Wait until the browser is truly idle — all pending resources (fonts,
+    // images, sub-resources) loaded, layout settled, custom elements upgraded.
+    // On Tauri the window is still hidden so rAF won't fire; we rely on the
+    // load event + idle callback instead.
+    if (document.readyState !== "complete") {
+      await new Promise<void>((r) => window.addEventListener("load", () => r(), { once: true }));
+    }
+    await new Promise<void>((r) => {
+      if ("requestIdleCallback" in window) {
+        (window as any).requestIdleCallback(() => r(), { timeout: 300 });
+      } else {
+        setTimeout(r, 200);
+      }
+    });
+
+    // Show the Tauri window now that everything is fully rendered (desktop starts
+    // hidden via visible(false) to prevent FOUC / partial-render flash).
+    if (isTauri()) {
+      try {
+        const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+        await getCurrentWebviewWindow().show();
+      } catch (_) {}
+    }
+
+    // Enable CSS transitions/animations now that the initial render is settled.
+    document.documentElement.classList.remove("preload");
   });
 
   return (

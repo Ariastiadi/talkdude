@@ -1,4 +1,4 @@
-import { createSignal, createMemo } from "solid-js";
+import { createSignal, createMemo, batch } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 import { db, type Conversation, type Message, type MessagePart } from "../db";
 import { streamChat, sendChat, type StreamCallbacks } from "../api/gemini";
@@ -12,7 +12,7 @@ import type {
 } from "../api/types";
 import { DEFAULT_MODEL_ID } from "../api/types";
 import { getActiveSystemInstruction } from "./custom-instructions";
-import { thinkingEnabled, thinkingBudget, thinkingLevel, isGemini3Model, modelSupportsThinking, modelAlwaysThinking } from "./thinking";
+import { thinkingEnabled, setThinkingEnabled, thinkingBudget, setThinkingBudget, thinkingLevel, setThinkingLevel, isGemini3Model, modelSupportsThinking, modelAlwaysThinking, clampThinkingLevelForModel } from "./thinking";
 
 // --- Helpers ---
 
@@ -207,10 +207,35 @@ export async function loadConversations(): Promise<void> {
 }
 
 export async function selectConversation(id: string | null): Promise<void> {
+  // Save current settings to the outgoing conversation
+  const oldId = activeConversationId();
+  if (oldId) {
+    await db.conversations.update(oldId, {
+      model: selectedModel(),
+      searchEnabled: searchEnabled(),
+      urlContextEnabled: urlContextEnabled(),
+      thinkingEnabled: thinkingEnabled(),
+      thinkingBudget: thinkingBudget(),
+      thinkingLevel: thinkingLevel(),
+    });
+  }
+
   setActiveConversationId(id);
   setChatError(null);
 
   if (id) {
+    // Restore settings from the incoming conversation
+    const conv = await db.conversations.get(id);
+    if (conv) {
+      setSelectedModel(conv.model);
+      clampThinkingLevelForModel(conv.model);
+      setSearchEnabled(conv.searchEnabled ?? false);
+      setUrlContextEnabled(conv.urlContextEnabled ?? false);
+      if (conv.thinkingEnabled !== undefined) setThinkingEnabled(conv.thinkingEnabled);
+      if (conv.thinkingBudget !== undefined) setThinkingBudget(conv.thinkingBudget);
+      if (conv.thinkingLevel !== undefined) setThinkingLevel(conv.thinkingLevel as "low" | "medium" | "high");
+    }
+
     const msgs = await db.messages.where("conversationId").equals(id).sortBy("createdAt");
     setMessages(msgs);
 
@@ -247,6 +272,11 @@ export async function createConversation(title?: string): Promise<string> {
     id: crypto.randomUUID(),
     title: title || "New Chat",
     model: selectedModel(),
+    searchEnabled: searchEnabled(),
+    urlContextEnabled: urlContextEnabled(),
+    thinkingEnabled: thinkingEnabled(),
+    thinkingBudget: thinkingBudget(),
+    thinkingLevel: thinkingLevel(),
     createdAt: now,
     updatedAt: now,
   };
@@ -346,15 +376,45 @@ export function stopStreaming(): void {
 async function loadBranchState(conversationId: string): Promise<void> {
   const branches = await db.messageBranches.where("conversationId").equals(conversationId).toArray();
   const state: Record<string, { total: number; activeIndex: number }> = {};
+
+  // Group branches by branchGroupId and find the max index
   for (const b of branches) {
     if (!state[b.branchGroupId]) {
-      state[b.branchGroupId] = { total: 1, activeIndex: 0 };
+      state[b.branchGroupId] = { total: 0, activeIndex: 0 };
     }
-    // total = number of branch records + 1 (active). activeIndex = max + 1
-    const current = state[b.branchGroupId];
-    current.total = Math.max(current.total, b.branchIndex + 2); // +1 for 0-indexed, +1 for active
-    current.activeIndex = current.total - 1; // active is always the last one
+    state[b.branchGroupId].total = Math.max(state[b.branchGroupId].total, b.branchIndex + 1);
   }
+
+  // The active branch is whichever one is currently live in messages (not stored
+  // as a snapshot).  Determine it by checking which branchIndex has NO snapshot
+  // matching the current messages — i.e. the messages ARE the active branch.
+  // Fallback: the highest index that isn't stored as a snapshot, or simply the
+  // max index.  For simplicity we check the messages for branchGroupId presence.
+  const msgs = await db.messages.where("conversationId").equals(conversationId).sortBy("createdAt");
+  for (const groupId of Object.keys(state)) {
+    const branchMsg = msgs.find((m) => m.branchGroupId === groupId);
+    if (branchMsg) {
+      // The live messages represent one branch.  Figure out which index they
+      // correspond to by checking snapshots.
+      const liveSnapshot = msgs.slice(msgs.indexOf(branchMsg));
+      const groupBranches = branches.filter((b) => b.branchGroupId === groupId);
+      let foundActive = false;
+      for (const gb of groupBranches) {
+        if (gb.snapshot.length === liveSnapshot.length &&
+            gb.snapshot.every((s, i) => s.id === liveSnapshot[i].id)) {
+          state[groupId].activeIndex = gb.branchIndex;
+          foundActive = true;
+          break;
+        }
+      }
+      if (!foundActive) {
+        // Live messages don't match any stored snapshot — they are the newest branch
+        state[groupId].total += 1;
+        state[groupId].activeIndex = state[groupId].total - 1;
+      }
+    }
+  }
+
   setBranchState(state);
 }
 
@@ -655,12 +715,38 @@ export async function editMessage(messageId: string, newText: string, newAttachm
       }
     }
 
-    // Reload messages and revert branch state
+    // Reload messages and revert branch state atomically so the UI never
+    // renders with stale branch counts.
     const restored = await db.messages.where("conversationId").equals(convId!).sortBy("createdAt");
-    setMessages(restored);
-    setBranchState(produce((d) => {
-      d[branchGroupId!] = { total: newBranchIndex + 1, activeIndex: currentActiveIndex };
-    }));
+
+    if (currentBranchCount <= 1) {
+      // First edit failed — remove all branch artifacts
+      const allBranches = await db.messageBranches
+        .where("branchGroupId").equals(branchGroupId!)
+        .toArray();
+      for (const b of allBranches) {
+        await db.messageBranches.delete(b.id);
+      }
+      batch(() => {
+        setMessages(restored);
+        setBranchState(produce((d) => { delete d[branchGroupId!]; }));
+      });
+    } else {
+      // Subsequent edit failed — remove any stale branch record for the
+      // failed new index and revert to previous count.
+      const stale = await db.messageBranches
+        .where("branchGroupId").equals(branchGroupId!)
+        .filter((b) => b.branchIndex === newBranchIndex)
+        .first();
+      if (stale) await db.messageBranches.delete(stale.id);
+
+      batch(() => {
+        setMessages(restored);
+        setBranchState(produce((d) => {
+          d[branchGroupId!] = { total: currentBranchCount, activeIndex: currentActiveIndex };
+        }));
+      });
+    }
 
     // Set recovery data so UI can repopulate input
     setRecoveryText(newText);
@@ -671,7 +757,7 @@ export async function editMessage(messageId: string, newText: string, newAttachm
 // --- Conversation History → GeminiContent[] ---
 
 function buildContentsFromMessages(msgs: Message[]): GeminiContent[] {
-  return msgs.map((msg) => ({
+  const raw = msgs.map((msg) => ({
     role: msg.role,
     parts: msg.parts
       .map((p): GeminiContentPart | null => {
@@ -698,6 +784,18 @@ function buildContentsFromMessages(msgs: Message[]): GeminiContent[] {
       })
       .filter((p): p is GeminiContentPart => p !== null && (p.text !== "" || !!p.inlineData || !!p.functionCall || !!p.functionResponse)),
   })).filter((c) => c.parts.length > 0);
+
+  // Ensure strict user/model alternation required by the API.
+  // Insert synthetic placeholder messages where consecutive same-role entries occur.
+  const result: GeminiContent[] = [];
+  for (const entry of raw) {
+    if (result.length > 0 && result[result.length - 1].role === entry.role) {
+      const filler = entry.role === "user" ? "model" : "user";
+      result.push({ role: filler, parts: [{ text: "..." }] });
+    }
+    result.push(entry);
+  }
+  return result;
 }
 
 // --- Build active tools ---
@@ -941,7 +1039,11 @@ async function startStream(
         });
       }
 
-      if (parts.length > 0) {
+      // For branch operations (edits), if an error occurred, always recover
+      // regardless of partial content — revert the branch entirely.
+      const shouldRecoverBranch = hadError && branchCtx && onErrorRecovery && isViewing();
+
+      if (parts.length > 0 && !shouldRecoverBranch) {
         const assistantMsg: Message = {
           id: crypto.randomUUID(),
           conversationId: convId,
@@ -983,13 +1085,18 @@ async function startStream(
         }
       }
 
-      // Error recovery: if no model response was produced and an error occurred,
-      // clean up the orphaned user message and restore input state.
-      if (parts.length === 0 && hadError && onErrorRecovery && isViewing()) {
+      // Error recovery: revert orphaned user message / branch and restore input.
+      // Capture viewing state before recovery (recovery changes activeIndex,
+      // which would make isViewing() return false afterwards).
+      const wasViewing = isViewing();
+
+      if (shouldRecoverBranch) {
+        await onErrorRecovery!();
+      } else if (parts.length === 0 && hadError && onErrorRecovery && wasViewing) {
         await onErrorRecovery();
       }
 
-      if (isViewing()) {
+      if (wasViewing) {
         setStreamingText("");
         setStreamingThinking("");
         setStreamingImages([]);

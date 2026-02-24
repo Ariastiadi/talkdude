@@ -1,3 +1,15 @@
+/* Suppress transitions and fast-forward animations during initial mount to
+   prevent visual flash.  We use animation-duration:0s (not animation:none)
+   so that animation-name stays unchanged.  When the preload class is removed
+   only the duration changes, which does NOT restart animations per CSS spec,
+   preventing the welcome-in / message-in slide from replaying visibly. */
+.preload *,
+.preload *::before,
+.preload *::after {
+  transition: none !important;
+  animation-duration: 0s !important;
+}
+
 .app-shell {
   display: flex;
   height: 100%;

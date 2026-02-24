@@ -7,11 +7,12 @@ import {
   GOOGLE_OAUTH_AUTH_URL,
   GOOGLE_OAUTH_TOKEN_URL,
   GOOGLE_USERINFO_URL,
-  ANTIGRAVITY_ENDPOINT,
   ANTIGRAVITY_API_VERSION,
   ANTIGRAVITY_USER_AGENT,
   ANTIGRAVITY_API_CLIENT,
   ANTIGRAVITY_CLIENT_METADATA,
+  ANTIGRAVITY_ENDPOINT_FALLBACKS,
+  ANTIGRAVITY_LOAD_ENDPOINTS,
 } from "./constants";
 import { db, type AuthAccount } from "../db";
 import {
@@ -78,53 +79,59 @@ function extractProjectId(data: { cloudaicompanionProject?: string | { id?: stri
 // --- User Onboarding ---
 
 /**
- * Onboards a new user by calling the onboardUser endpoint.
- * Polls up to 5 times (2 s intervals) until the server reports done.
+ * Onboards a user by calling the onboardUser endpoint.
+ * Tries across all endpoint fallbacks.
+ * Polls up to 10 times (5 s intervals) until the server reports done.
  */
-async function onboardUser(accessToken: string, tierID: string): Promise<string> {
-  const endpointBase = `${ANTIGRAVITY_ENDPOINT}/${ANTIGRAVITY_API_VERSION}`;
-  const maxAttempts = 5;
-  const pollDelayMs = 2_000;
+async function onboardUser(accessToken: string, tierID: string, projectId?: string): Promise<string> {
+  const maxAttempts = 10;
+  const pollDelayMs = 5_000;
 
-  const body = JSON.stringify({
-    tierId: tierID,
-    metadata: {
-      ideType: "ANTIGRAVITY",
-      platform: "PLATFORM_UNSPECIFIED",
-      pluginType: "GEMINI",
-    },
-  });
+  const metadata: Record<string, string> = {
+    ideType: "ANTIGRAVITY",
+    platform: "PLATFORM_UNSPECIFIED",
+    pluginType: "GEMINI",
+  };
+  if (projectId) {
+    metadata.duetProject = projectId;
+  }
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    let resp: Response;
-    try {
-      resp = await platformFetch(`${endpointBase}:onboardUser`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-          ...getAntigravityApiHeaders(),
-        },
-        body,
-      });
-    } catch {
-      return "";
-    }
+  const body = JSON.stringify({ tierId: tierID, metadata });
 
-    if (!resp.ok) {
-      return "";
-    }
+  for (const baseEndpoint of ANTIGRAVITY_ENDPOINT_FALLBACKS) {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      let resp: Response;
+      try {
+        resp = await platformFetch(`${baseEndpoint}/${ANTIGRAVITY_API_VERSION}:onboardUser`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+            ...getAntigravityApiHeaders(),
+          },
+          body,
+        });
+      } catch {
+        break; // network error on this endpoint, try next
+      }
 
-    const data = (await resp.json()) as OnboardResponse;
+      if (!resp.ok) {
+        break; // error on this endpoint, try next
+      }
 
-    if (data.done) {
-      const projectId = data.response ? extractProjectId(data.response) : "";
-      return projectId || "";
-    }
+      const data = (await resp.json()) as OnboardResponse;
 
-    // Not finished yet — wait before next poll
-    if (attempt < maxAttempts) {
-      await new Promise((r) => setTimeout(r, pollDelayMs));
+      if (data.done) {
+        const resolvedId = data.response ? extractProjectId(data.response) : "";
+        if (resolvedId) return resolvedId;
+        if (projectId) return projectId;
+        break;
+      }
+
+      // Not finished yet — wait before next poll
+      if (attempt < maxAttempts) {
+        await new Promise((r) => setTimeout(r, pollDelayMs));
+      }
     }
   }
 
@@ -135,51 +142,67 @@ async function onboardUser(accessToken: string, tierID: string): Promise<string>
 
 /**
  * Discovers the project ID for an authenticated user.
- * 1. Calls loadCodeAssist — returns project ID if the user is already onboarded.
- * 2. If no project ID, checks allowedTiers and onboards the user.
+ * 1. Calls loadCodeAssist across multiple endpoints (prod first) to get the project + tier.
+ * 2. If no project found, calls onboardUser to auto-provision one.
  */
-async function discoverProjectId(accessToken: string): Promise<string> {
-  const endpointBase = `${ANTIGRAVITY_ENDPOINT}/${ANTIGRAVITY_API_VERSION}`;
+export async function discoverProjectId(accessToken: string): Promise<string> {
+  const loadBody = JSON.stringify({
+    metadata: {
+      ideType: "ANTIGRAVITY",
+      platform: "PLATFORM_UNSPECIFIED",
+      pluginType: "GEMINI",
+    },
+  });
 
-  let data: LoadCodeAssistResponse;
-  try {
-    const resp = await platformFetch(`${endpointBase}:loadCodeAssist`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-        ...getAntigravityApiHeaders(),
-      },
-      body: JSON.stringify({
-        metadata: {
-          ideType: "ANTIGRAVITY",
-          platform: "PLATFORM_UNSPECIFIED",
-          pluginType: "GEMINI",
+  let data: LoadCodeAssistResponse | null = null;
+
+  // Try loadCodeAssist across all endpoints
+  const loadEndpoints = [...new Set([...ANTIGRAVITY_LOAD_ENDPOINTS, ...ANTIGRAVITY_ENDPOINT_FALLBACKS])];
+  for (const baseEndpoint of loadEndpoints) {
+    try {
+      const resp = await platformFetch(`${baseEndpoint}/${ANTIGRAVITY_API_VERSION}:loadCodeAssist`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          ...getAntigravityApiHeaders(),
         },
-      }),
-    });
+        body: loadBody,
+      });
 
-    if (!resp.ok) return "";
+      if (!resp.ok) continue;
 
-    data = (await resp.json()) as LoadCodeAssistResponse;
-  } catch {
-    return "";
-  }
-
-  // Already onboarded — project ID present
-  const projectId = extractProjectId(data);
-  if (projectId) return projectId;
-
-  // Not onboarded — determine the tier and trigger onboarding
-  let tierID = "legacy-tier";
-  if (Array.isArray(data.allowedTiers)) {
-    const defaultTier = data.allowedTiers.find((t) => t.isDefault);
-    if (defaultTier?.id?.trim()) {
-      tierID = defaultTier.id.trim();
+      const payload = (await resp.json()) as LoadCodeAssistResponse;
+      const projectId = extractProjectId(payload);
+      if (projectId) {
+        data = payload;
+        break;
+      }
+    } catch {
+      continue;
     }
   }
 
-  return onboardUser(accessToken, tierID);
+  const frontendProjectId = data ? extractProjectId(data) : "";
+
+  // Determine tier
+  let tierID = "FREE";
+  if (data && Array.isArray(data.allowedTiers)) {
+    const defaultTier = data.allowedTiers.find((t) => t.isDefault);
+    if (defaultTier?.id?.trim()) {
+      tierID = defaultTier.id.trim();
+    } else if (data.allowedTiers[0]?.id?.trim()) {
+      tierID = data.allowedTiers[0].id.trim();
+    }
+  }
+
+  if (frontendProjectId) {
+    return frontendProjectId;
+  }
+
+  // No project from loadCodeAssist — auto-provision via onboarding
+  const provisionedId = await onboardUser(accessToken, tierID);
+  return provisionedId;
 }
 
 // --- Post-Auth: fetch user info, discover project, persist account ---

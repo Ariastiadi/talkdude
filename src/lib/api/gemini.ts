@@ -1,7 +1,7 @@
 import { getValidAccessToken } from "../auth/token";
 import { platformFetch } from "../platform";
 import {
-  ANTIGRAVITY_ENDPOINT,
+  ANTIGRAVITY_ENDPOINT_FALLBACKS,
   ANTIGRAVITY_DEFAULT_PROJECT_ID,
   LUMI_SYSTEM_INSTRUCTION,
 } from "../auth/constants";
@@ -16,14 +16,26 @@ import type {
   GeminiInlineData,
 } from "./types";
 
-// --- API Fetch ---
+// --- API Fetch with endpoint fallback ---
 
 async function apiFetch(
   path: string,
   init: RequestInit,
   signal?: AbortSignal,
 ): Promise<Response> {
-  return platformFetch(`${ANTIGRAVITY_ENDPOINT}${path}`, { ...init, signal });
+  for (let i = 0; i < ANTIGRAVITY_ENDPOINT_FALLBACKS.length; i++) {
+    const isLast = i === ANTIGRAVITY_ENDPOINT_FALLBACKS.length - 1;
+    try {
+      const resp = await platformFetch(`${ANTIGRAVITY_ENDPOINT_FALLBACKS[i]}${path}`, { ...init, signal });
+          if (resp.ok || isLast) return resp;
+      // Fallback on 403 (API not enabled), 404 (model not on this cluster), rate-limit, or server errors
+      if (resp.status === 403 || resp.status === 404 || resp.status === 429 || resp.status >= 500) continue;
+      return resp;
+    } catch (err) {
+      if (isLast) throw err;
+    }
+  }
+  throw new Error("No API endpoints available");
 }
 
 // --- Streaming callback types ---
@@ -93,7 +105,15 @@ export async function streamChat(
 ): Promise<void> {
   const { token, projectId } = await getValidAccessToken();
 
-  const requestBody: GeminiWrappedRequest = {
+  const fetchPath = "/v1internal:streamGenerateContent?alt=sse";
+  const baseHeaders = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+    Accept: "text/event-stream",
+  };
+
+  // --- Antigravity path (primary) ---
+  const antigravityBody: GeminiWrappedRequest = {
     project: projectId || ANTIGRAVITY_DEFAULT_PROJECT_ID,
     model,
     request: {
@@ -107,19 +127,11 @@ export async function streamChat(
     requestType: "agent",
   };
 
-  const resp = await apiFetch(
-    "/v1internal:streamGenerateContent?alt=sse",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        Accept: "text/event-stream",
-      },
-      body: JSON.stringify(requestBody),
-    },
-    signal,
-  );
+  const resp = await apiFetch(fetchPath, {
+    method: "POST",
+    headers: baseHeaders,
+    body: JSON.stringify(antigravityBody),
+  }, signal);
 
   if (!resp.ok) {
     let errorMsg: string;
@@ -241,7 +253,14 @@ export async function sendChat(
 ): Promise<{ parts: GeminiContentPart[]; usage?: { promptTokens: number; outputTokens: number; totalTokens: number } }> {
   const { token, projectId } = await getValidAccessToken();
 
-  const requestBody: GeminiWrappedRequest = {
+  const fetchPath = "/v1internal:generateContent";
+  const baseHeaders = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  };
+
+  // --- Antigravity path (primary) ---
+  const antigravityBody: GeminiWrappedRequest = {
     project: projectId || ANTIGRAVITY_DEFAULT_PROJECT_ID,
     model,
     request: {
@@ -254,13 +273,10 @@ export async function sendChat(
     requestType: "agent",
   };
 
-  const resp = await apiFetch("/v1internal:generateContent", {
+  const resp = await apiFetch(fetchPath, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(requestBody),
+    headers: baseHeaders,
+    body: JSON.stringify(antigravityBody),
   });
 
   if (!resp.ok) {
