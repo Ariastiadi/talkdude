@@ -352,6 +352,102 @@ export async function toggleArchiveConversation(id: string): Promise<void> {
   }
 }
 
+// --- Batch Conversation Operations ---
+
+export async function deleteConversations(ids: string[]): Promise<void> {
+  for (const id of ids) {
+    const bg = backgroundStreams.get(id);
+    if (bg) {
+      bg.abortController.abort();
+      backgroundStreams.delete(id);
+      setStreamingConvIds(produce((d) => { delete d[id]; }));
+      setStreamingBranchCtx(produce((d) => { delete d[id]; }));
+    }
+    await db.messages.where("conversationId").equals(id).delete();
+    await db.thoughtSignatures.where("conversationId").equals(id).delete();
+    await db.messageBranches.where("conversationId").equals(id).delete();
+  }
+  await db.conversations.bulkDelete(ids);
+  const idSet = new Set(ids);
+  setConversations(produce((draft) => {
+    for (let i = draft.length - 1; i >= 0; i--) {
+      if (idSet.has(draft[i].id)) draft.splice(i, 1);
+    }
+  }));
+  if (activeConversationId() && idSet.has(activeConversationId()!)) {
+    await selectConversation(null);
+  }
+}
+
+export async function pinConversations(ids: string[]): Promise<void> {
+  const now = Date.now();
+  for (const id of ids) {
+    await db.conversations.update(id, { pinned: now });
+  }
+  const idSet = new Set(ids);
+  setConversations(produce((draft) => {
+    for (const c of draft) {
+      if (idSet.has(c.id)) c.pinned = now;
+    }
+  }));
+}
+
+export async function unpinConversations(ids: string[]): Promise<void> {
+  for (const id of ids) {
+    await db.conversations.update(id, { pinned: 0 });
+  }
+  const idSet = new Set(ids);
+  setConversations(produce((draft) => {
+    for (const c of draft) {
+      if (idSet.has(c.id)) c.pinned = 0;
+    }
+  }));
+}
+
+export async function archiveConversations(ids: string[]): Promise<void> {
+  for (const id of ids) {
+    await db.conversations.update(id, { archived: true, pinned: 0 });
+  }
+  const idSet = new Set(ids);
+  setConversations(produce((draft) => {
+    for (const c of draft) {
+      if (idSet.has(c.id)) { c.archived = true; c.pinned = 0; }
+    }
+  }));
+  if (activeConversationId() && idSet.has(activeConversationId()!)) {
+    await selectConversation(null);
+  }
+}
+
+export async function unarchiveConversations(ids: string[]): Promise<void> {
+  for (const id of ids) {
+    await db.conversations.update(id, { archived: false });
+  }
+  const idSet = new Set(ids);
+  setConversations(produce((draft) => {
+    for (const c of draft) {
+      if (idSet.has(c.id)) c.archived = false;
+    }
+  }));
+}
+
+export async function deleteAllConversations(): Promise<void> {
+  // Abort all active streams
+  for (const bg of backgroundStreams.values()) {
+    bg.abortController.abort();
+  }
+  backgroundStreams.clear();
+  setStreamingConvIds({});
+  setStreamingBranchCtx({});
+
+  await db.conversations.clear();
+  await db.messages.clear();
+  await db.thoughtSignatures.clear();
+  await db.messageBranches.clear();
+  setConversations([]);
+  await selectConversation(null);
+}
+
 // --- Streaming Control ---
 
 export function stopStreaming(): void {

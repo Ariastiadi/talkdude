@@ -181,6 +181,16 @@ export const AVAILABLE_MODELS: ModelDefinition[] = [
     defaultThinkingLevel: "high",
     thinkingLevels: ["low", "high"],
   },
+  {
+    id: "gemini-3.1-pro-preview",
+    name: "Gemini 3.1 Pro Preview",
+    contextWindow: 1048576,
+    maxOutput: 65536,
+    supportsThinking: true,
+    alwaysThinking: true,
+    defaultThinkingLevel: "high",
+    thinkingLevels: ["low", "medium", "high"],
+  }
 ];
 
 export const DEFAULT_MODEL_ID = "gemini-2.5-flash";

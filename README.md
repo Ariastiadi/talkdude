@@ -24,6 +24,8 @@ A friendly, human-like AI chatbot powered by Google's Gemini models via the Anti
 | Windows | EXE, MSI | [GitHub Releases](https://github.com/iamlooper/Lumi-AI/releases) |
 | Linux | AppImage, DEB, RPM | [GitHub Releases](https://github.com/iamlooper/Lumi-AI/releases) |
 
+> **Linux (Arch/Fedora-based distros):** If the AppImage crashes with an EGL display error, install the `.deb` (via `debtap`) or `.rpm` (via `rpmextract`) package instead.
+
 > **Web:** A hosted web version isn't available because OAuth authentication requires a localhost callback, which only works on your own machine. To try Lumi AI in the browser, clone the repo and run `bun run dev` locally.
 
 ## Screenshots 📱

@@ -1268,6 +1268,7 @@
 
 @media (max-width: 599px) {
   .message-bubble { padding: 10px 14px; }
+  .bubble-model { padding: 4px 0; border-radius: 0; }
   .chat-input-area { padding: 8px 12px 12px; }
   /* Hide desktop suggestion row on mobile */
   .suggestion-row { display: none; }

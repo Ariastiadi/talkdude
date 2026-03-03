@@ -185,9 +185,9 @@ export async function discoverProjectId(accessToken: string): Promise<string> {
 
   const frontendProjectId = data ? extractProjectId(data) : "";
 
-  // Determine tier
-  let tierID = "FREE";
-  if (data && Array.isArray(data.allowedTiers)) {
+  // Determine tier from allowedTiers when available
+  let tierID = "";
+  if (data && Array.isArray(data.allowedTiers) && data.allowedTiers.length > 0) {
     const defaultTier = data.allowedTiers.find((t) => t.isDefault);
     if (defaultTier?.id?.trim()) {
       tierID = defaultTier.id.trim();
@@ -200,9 +200,20 @@ export async function discoverProjectId(accessToken: string): Promise<string> {
     return frontendProjectId;
   }
 
-  // No project from loadCodeAssist — auto-provision via onboarding
-  const provisionedId = await onboardUser(accessToken, tierID);
-  return provisionedId;
+  // No project from loadCodeAssist — auto-provision via onboarding.
+  // When allowedTiers is absent, try both known default tiers in sequence
+  // since different accounts may require either one to succeed.
+  if (data && Array.isArray(data.allowedTiers) && data.allowedTiers.length > 0) {
+    return await onboardUser(accessToken, tierID);
+  }
+
+  const fallbackTiers = ["FREE", "legacy-tier"];
+  for (const tier of fallbackTiers) {
+    const provisionedId = await onboardUser(accessToken, tier);
+    if (provisionedId) return provisionedId;
+  }
+
+  return "";
 }
 
 // --- Post-Auth: fetch user info, discover project, persist account ---

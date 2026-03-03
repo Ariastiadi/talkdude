@@ -112,7 +112,6 @@ export async function streamChat(
     Accept: "text/event-stream",
   };
 
-  // --- Antigravity path (primary) ---
   const antigravityBody: GeminiWrappedRequest = {
     project: projectId || ANTIGRAVITY_DEFAULT_PROJECT_ID,
     model,
@@ -259,7 +258,6 @@ export async function sendChat(
     "Content-Type": "application/json",
   };
 
-  // --- Antigravity path (primary) ---
   const antigravityBody: GeminiWrappedRequest = {
     project: projectId || ANTIGRAVITY_DEFAULT_PROJECT_ID,
     model,
