@@ -1,4 +1,4 @@
-// --- Gemini API Request Types ---
+// === Gemini API Request Types ===
 
 export interface GeminiInlineData {
   mimeType: string;
@@ -26,6 +26,8 @@ export interface GeminiContentPart {
     id?: string;
     response: unknown;
   };
+  executableCode?: { language: string; code: string };
+  codeExecutionResult?: { outcome: string; output: string };
 }
 
 export interface GeminiContent {
@@ -48,7 +50,7 @@ export interface GeminiGenerationConfig {
   responseModalities?: string[]; // e.g. ["TEXT", "IMAGE"]
 }
 
-// --- Tool Types ---
+// === Tool Types ===
 
 export interface GeminiFunctionDeclaration {
   name: string;
@@ -56,12 +58,11 @@ export interface GeminiFunctionDeclaration {
   parameters?: Record<string, unknown>;
 }
 
-// NOTE: codeExecution tool is intentionally excluded — the Antigravity gateway
-// (cloudcode-pa.googleapis.com) rejects it with HTTP 400.
 export type GeminiTool =
   | { functionDeclarations: GeminiFunctionDeclaration[] }
   | { googleSearch: Record<string, never> }
-  | { urlContext: Record<string, never> };
+  | { urlContext: Record<string, never> }
+  | { codeExecution: Record<string, never> };
 
 export interface GeminiRequest {
   contents: GeminiContent[];
@@ -73,16 +74,7 @@ export interface GeminiRequest {
   tools?: GeminiTool[];
 }
 
-export interface GeminiWrappedRequest {
-  project: string;
-  model: string;
-  request: GeminiRequest;
-  userAgent?: string;
-  requestId?: string;
-  requestType?: string;
-}
-
-// --- Gemini API Response Types ---
+// === Gemini API Response Types ===
 
 export interface GeminiGroundingChunk {
   web?: { uri: string; title: string };
@@ -118,15 +110,8 @@ export interface GeminiUsageMetadata {
 }
 
 export interface GeminiApiResponse {
-  response?: {
-    candidates?: GeminiResponseCandidate[];
-    usageMetadata?: GeminiUsageMetadata;
-    modelVersion?: string;
-    responseId?: string;
-  };
   candidates?: GeminiResponseCandidate[];
   usageMetadata?: GeminiUsageMetadata;
-  traceId?: string;
   error?: {
     code: number;
     message: string;
@@ -134,7 +119,7 @@ export interface GeminiApiResponse {
   };
 }
 
-// --- Model Definitions ---
+// === Model Definitions ===
 
 export interface ModelDefinition {
   id: string;
@@ -145,52 +130,66 @@ export interface ModelDefinition {
   alwaysThinking?: boolean;
   defaultThinkingLevel?: string;
   thinkingLevels?: string[];
+  supportsCodeExecution?: boolean;
+  // When false, URL Context is not available; defaults to true when absent.
+  supportsUrlContext?: boolean;
 }
 
 export const AVAILABLE_MODELS: ModelDefinition[] = [
   {
-    id: "gemini-2.5-flash",
-    name: "Gemini 2.5 Flash",
+    id: "gemini-3.1-flash-lite",
+    name: "Gemini 3.1 Flash Lite",
     contextWindow: 1048576,
     maxOutput: 65536,
     supportsThinking: true,
-  },
-  {
-    id: "gemini-2.5-pro",
-    name: "Gemini 2.5 Pro",
-    contextWindow: 1048576,
-    maxOutput: 65536,
-    supportsThinking: true,
-  },
-  {
-    id: "gemini-3-flash-preview",
-    name: "Gemini 3 Flash Preview",
-    contextWindow: 1048576,
-    maxOutput: 65536,
-    supportsThinking: true,
+    // Default is "minimal" (no thinking) per API docs; user-selectable levels exclude minimal.
     defaultThinkingLevel: "high",
     thinkingLevels: ["low", "medium", "high"],
+    supportsCodeExecution: true,
+    supportsUrlContext: true,
   },
   {
-    id: "gemini-3-pro-preview",
-    name: "Gemini 3 Pro Preview",
-    contextWindow: 1048576,
-    maxOutput: 65536,
+    id: "gemma-4-26b-a4b-it",
+    name: "Gemma 4 26B",
+    contextWindow: 131072,
+    maxOutput: 8192,
     supportsThinking: true,
-    alwaysThinking: true,
+    // Gemma 4 only supports minimal (no thinking) and high; user-selectable level is "high".
     defaultThinkingLevel: "high",
-    thinkingLevels: ["low", "high"],
+    thinkingLevels: ["high"],
+    supportsCodeExecution: true,
+    // Gemma 4 does not support URL Context.
+    supportsUrlContext: false,
   },
   {
-    id: "gemini-3.1-pro-preview",
-    name: "Gemini 3.1 Pro Preview",
-    contextWindow: 1048576,
-    maxOutput: 65536,
+    id: "gemma-4-31b-it",
+    name: "Gemma 4 31B",
+    contextWindow: 131072,
+    maxOutput: 8192,
     supportsThinking: true,
-    alwaysThinking: true,
     defaultThinkingLevel: "high",
-    thinkingLevels: ["low", "medium", "high"],
-  }
+    thinkingLevels: ["high"],
+    supportsCodeExecution: true,
+    supportsUrlContext: false,
+  },
 ];
 
-export const DEFAULT_MODEL_ID = "gemini-2.5-flash";
+export const DEFAULT_MODEL_ID = "gemini-3.1-flash-lite";
+
+/**
+ * Model used for generating conversation titles.
+ * Uses the same model as the default chat model (Gemini 3.1 Flash Lite).
+ */
+export const TITLE_MODEL = "gemini-3.1-flash-lite";
+
+/** Returns true when the model supports the Code Execution tool. */
+export function modelSupportsCodeExecution(modelId: string): boolean {
+  return AVAILABLE_MODELS.find((m) => m.id === modelId)?.supportsCodeExecution ?? false;
+}
+
+/** Returns true when the model supports the URL Context tool. */
+export function modelSupportsUrlContext(modelId: string): boolean {
+  const model = AVAILABLE_MODELS.find((m) => m.id === modelId);
+  // Default to true when the field is absent so unknown models are permissive.
+  return model?.supportsUrlContext ?? true;
+}

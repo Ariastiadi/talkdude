@@ -55,8 +55,20 @@ jobs:
           cp src-tauri/target/release/bundle/appimage/*.AppImage linux-release/lumi-ai-linux-amd64.AppImage
           ls -lh linux-release/
 
-      - name: Upload Linux artifacts
+      - name: Upload AppImage
         uses: actions/upload-artifact@v6
         with:
-          name: lumi-ai-linux
-          path: linux-release/*
+          name: lumi-ai-linux-amd64.AppImage
+          path: linux-release/lumi-ai-linux-amd64.AppImage
+
+      - name: Upload deb
+        uses: actions/upload-artifact@v6
+        with:
+          name: lumi-ai-linux-amd64.deb
+          path: linux-release/lumi-ai-linux-amd64.deb
+
+      - name: Upload rpm
+        uses: actions/upload-artifact@v6
+        with:
+          name: lumi-ai-linux-x86_64.rpm
+          path: linux-release/lumi-ai-linux-x86_64.rpm

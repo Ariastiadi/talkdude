@@ -17,7 +17,7 @@
   padding: 48px 40px;
   border-radius: var(--md-sys-shape-corner-extra-large);
   background: var(--md-sys-color-surface);
-  max-width: 400px;
+  max-width: 420px;
   width: 100%;
   text-align: center;
 }
@@ -79,48 +79,204 @@
   text-decoration: underline;
 }
 
-/* --- Disclaimer Dialog (extends .confirm-dialog from Sidebar.css) --- */
-
-.disclaimer-dialog {
-  display: flex;
-  flex-direction: column;
-  max-width: 480px;
-  max-height: calc(100vh - 48px);
-  text-align: left;
+.login-link-danger {
+  color: var(--md-sys-color-error);
 }
 
-.disclaimer-dialog-body {
+/* === API Key Form === */
+
+.api-key-form {
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  overflow-y: auto;
-  min-height: 0;
-  margin-bottom: 24px;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
 }
 
-.disclaimer-section {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+.api-key-input-wrapper {
+  width: 100%;
 }
 
-.disclaimer-heading {
-  margin: 0;
+.api-key-input {
+  width: 100%;
+  padding: 14px 16px;
+  border: 1.5px solid var(--md-sys-color-outline);
+  border-radius: var(--md-sys-shape-corner-medium);
+  background: var(--md-sys-color-surface-container-highest);
   color: var(--md-sys-color-on-surface);
+  font-family: "Roboto Mono", monospace, system-ui;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s;
+  box-sizing: border-box;
 }
 
-.disclaimer-section p {
-  margin: 0;
+.api-key-input:focus {
+  border-color: var(--md-sys-color-primary);
+}
+
+.api-key-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.api-key-input::placeholder {
   color: var(--md-sys-color-on-surface-variant);
-  line-height: 1.6;
+  opacity: 0.5;
 }
 
-/* --- Responsive --- */
+.api-key-hint {
+  margin: 0;
+  opacity: 0.7;
+}
+
+.api-key-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.skip-button {
+  --md-text-button-label-text-color: var(--md-sys-color-on-surface-variant);
+}
+
+/* Native replacement for md-text-button that avoids the shadow DOM hover coverage bug. */
+.login-text-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--md-sys-shape-corner-full);
+  color: var(--md-sys-color-on-surface-variant);
+  font-family: var(--md-sys-typescale-label-large-font, "Roboto", system-ui);
+  font-size: var(--md-sys-typescale-label-large-size, 14px);
+  font-weight: var(--md-sys-typescale-label-large-weight, 500);
+  letter-spacing: var(--md-sys-typescale-label-large-tracking, 0.00625em);
+  /* Padding matches Material text button (10px vertical, 12px horizontal). */
+  padding: 10px 12px;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition: background-color 0.2s;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+.login-text-btn::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--md-sys-color-on-surface-variant);
+  border-radius: inherit;
+  opacity: 0;
+  transition: opacity 0.2s;
+  pointer-events: none;
+}
+
+.login-text-btn:hover::before {
+  opacity: 0.08;
+}
+
+.login-text-btn:active::before {
+  opacity: 0.12;
+}
+
+.login-text-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* Primary color variant for dialog Cancel buttons (MD3 dialog text button spec). */
+.login-text-btn-primary {
+  color: var(--md-sys-color-primary);
+}
+
+.login-text-btn-primary::before {
+  background: var(--md-sys-color-primary);
+}
+
+/* Error color variant for destructive actions like Remove API key. */
+.login-text-btn-danger {
+  color: var(--md-sys-color-error);
+}
+
+.login-text-btn-danger::before {
+  background: var(--md-sys-color-error);
+}
+
+/* === Responsive === */
 
 @media (max-width: 599px) {
   .login-screen { padding: 16px; }
   .login-card { padding: 32px 24px; }
   .login-logo { width: 64px; height: 64px; }
   .login-icon { --md-icon-size: 32px; }
-  .disclaimer-dialog { max-width: 300px; }
+}
+
+/* === API Key Dialog === */
+
+.apikey-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  animation: apikey-backdrop-in 150ms ease-out;
+}
+
+@keyframes apikey-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.apikey-dialog {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--md-sys-color-surface-container-high);
+  border-radius: var(--md-sys-shape-corner-extra-large);
+  padding: 24px;
+  min-width: 320px;
+  max-width: min(480px, calc(100vw - 48px));
+  width: 100%;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+  animation: apikey-dialog-in 200ms var(--motion-easing-emphasized-decelerate);
+}
+
+.apikey-dialog-title {
+  color: var(--md-sys-color-on-surface);
+  margin: 0 0 2px;
+}
+
+.apikey-dialog-subtitle {
+  color: var(--md-sys-color-on-surface-variant);
+  margin: 0 0 8px;
+}
+
+.apikey-dialog-error {
+  margin-bottom: 4px;
+}
+
+.apikey-dialog-remove {
+  align-self: center;
+  margin-top: 4px;
+}
+
+@keyframes apikey-dialog-in {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }

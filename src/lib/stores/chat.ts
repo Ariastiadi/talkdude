@@ -1,7 +1,7 @@
 import { createSignal, createMemo, batch } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 import { db, type Conversation, type Message, type MessagePart } from "../db";
-import { streamChat, sendChat, type StreamCallbacks } from "../api/gemini";
+import { streamChat, sendChat, uploadFile, getCurrentApiKeyHint, type StreamCallbacks } from "../api/gemini";
 import type {
   GeminiContent,
   GeminiContentPart,
@@ -10,28 +10,32 @@ import type {
   GeminiGroundingMetadata,
   GeminiInlineData,
 } from "../api/types";
-import { DEFAULT_MODEL_ID } from "../api/types";
+import { DEFAULT_MODEL_ID, TITLE_MODEL, modelSupportsCodeExecution, modelSupportsUrlContext } from "../api/types";
 import { getActiveSystemInstruction } from "./custom-instructions";
-import { thinkingEnabled, setThinkingEnabled, thinkingBudget, setThinkingBudget, thinkingLevel, setThinkingLevel, isGemini3Model, modelSupportsThinking, modelAlwaysThinking, clampThinkingLevelForModel } from "./thinking";
+import { thinkingEnabled, setThinkingEnabled, thinkingLevel, setThinkingLevel, usesLevelBasedThinking, modelSupportsThinking, modelAlwaysThinking, clampThinkingLevelForModel } from "./thinking";
 
-// --- Helpers ---
+// === Helpers ===
 
 /** Deep-clone a store value into a plain object safe for IndexedDB's structured clone. */
 function toPlain<T>(obj: T): T {
   return JSON.parse(JSON.stringify(obj));
 }
 
-// --- Attachment Types ---
+// === Attachment Types ===
 
 export interface FileAttachment {
   id: string;
   file: File;
   mimeType: string;
-  base64: string;
-  preview?: string; // data URL for image thumbnails
+  preview?: string;        // data URL for image thumbnails
+  uploading: boolean;      // true while the Files API upload is in progress
+  fileUri?: string;        // Files API URI, set after a successful upload
+  expiresAt?: number;      // Unix timestamp (ms) when the uploaded file expires
+  apiKeyHint?: string;     // key identifier used at upload time for change detection
+  uploadError?: string;    // error message if the upload failed or the file is invalid
 }
 
-// --- State ---
+// === State ===
 
 const [conversations, setConversations] = createStore<Conversation[]>([]);
 const [activeConversationId, setActiveConversationId] = createSignal<string | null>(null);
@@ -41,18 +45,24 @@ const [selectedModel, setSelectedModel] = createSignal(DEFAULT_MODEL_ID);
 // Per-conversation streaming: which conversations are currently streaming
 const [streamingConvIds, setStreamingConvIds] = createStore<Record<string, boolean>>({});
 
-// UI streaming signals — only reflect the currently viewed conversation's stream
+// UI streaming signals: only reflect the currently viewed conversation's stream
 const [streamingText, setStreamingText] = createSignal("");
 const [streamingThinking, setStreamingThinking] = createSignal("");
 const [streamingImages, setStreamingImages] = createStore<GeminiInlineData[]>([]);
+const [streamingCodeBlocks, setStreamingCodeBlocks] = createStore<{ language: string; code: string }[]>([]);
+const [streamingCodeResults, setStreamingCodeResults] = createStore<{ outcome: string; output: string }[]>([]);
 const [chatError, setChatError] = createSignal<string | null>(null);
 
 // Tool toggles
 const [searchEnabled, setSearchEnabled] = createSignal(false);
 const [urlContextEnabled, setUrlContextEnabled] = createSignal(false);
+const [codeExecutionEnabled, setCodeExecutionEnabled] = createSignal(false);
 
 // File attachments pending send
 const [pendingAttachments, setPendingAttachments] = createStore<FileAttachment[]>([]);
+
+// Error surfaced at the input area when a file upload fails (separate from chatError).
+const [fileUploadError, setFileUploadError] = createSignal<string | null>(null);
 
 // Error recovery: restore user input on stream failure
 const [recoveryText, setRecoveryText] = createSignal<string | null>(null);
@@ -72,6 +82,14 @@ const backgroundStreams = new Map<string, {
   branchCtx?: { branchGroupId: string; branchIndex: number };
 }>();
 
+// Messages completed while selectConversation's DB read was in-flight.
+// Reconciled after setMessages so they aren't dropped by the stale snapshot.
+const pendingCompletedMessages = new Map<string, Message>();
+
+// Messages completed for an off-screen branch, keyed by groupId:index.
+// navigateBranch reconciles against this after loading the target snapshot.
+const pendingCompletedBranchMessages = new Map<string, Message>();
+
 export {
   conversations,
   activeConversationId,
@@ -82,11 +100,17 @@ export {
   streamingText,
   streamingThinking,
   streamingImages,
+  streamingCodeBlocks,
+  streamingCodeResults,
   chatError,
   searchEnabled,
   setSearchEnabled,
   urlContextEnabled,
   setUrlContextEnabled,
+  codeExecutionEnabled,
+  setCodeExecutionEnabled,
+  fileUploadError,
+  setFileUploadError,
   pendingAttachments,
   branchState,
   recoveryText,
@@ -95,12 +119,17 @@ export {
   setRecoveryAttachments,
 };
 
-// --- Derived ---
+// === Derived ===
 
 export const activeConversation = createMemo(() => {
   const id = activeConversationId();
   return conversations.find((c) => c.id === id) ?? null;
 });
+
+/** True when any pending attachment is still uploading to the Files API. */
+export const hasPendingUploads = createMemo(() =>
+  pendingAttachments.some((a) => a.uploading),
+);
 
 /** Whether the currently viewed conversation is streaming */
 export const isStreaming = createMemo(() => {
@@ -118,20 +147,7 @@ export const isViewingActiveStream = createMemo(() => {
   return current?.activeIndex === ctx.branchIndex;
 });
 
-// --- File Attachment Helpers ---
-
-function readFileAsBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      const base64 = result.split(",")[1] ?? "";
-      resolve(base64);
-    };
-    reader.onerror = () => reject(new Error(`Failed to read file: ${file.name}`));
-    reader.readAsDataURL(file);
-  });
-}
+// === File Attachment Helpers ===
 
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -142,21 +158,90 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
+/**
+ * Maps a file upload failure to a user-readable message.
+ * Upload errors need different phrasing than streaming errors because
+ * the user needs to know they can retry by re-selecting the file.
+ */
+function friendlyUploadError(err: unknown): string {
+  if (!(err instanceof Error)) return "Upload failed. Please try the file again.";
+  const msg = err.message;
+  if (msg.includes("No API key")) return msg;
+  const statusMatch = msg.match(/got status: (\d+)/);
+  if (statusMatch) {
+    const code = parseInt(statusMatch[1], 10);
+    switch (code) {
+      case 400: return "File type or size is not supported. Please try a different file.";
+      case 401: return "Invalid API key. Please check your key in Settings.";
+      case 403: return "Access denied. Your API key may not have permission to upload files.";
+      case 429: return "Upload rate limit reached. Please wait a moment and try again.";
+      case 500:
+      case 503: return "The Gemini API is temporarily unavailable. Please try again.";
+      default: return `Upload failed (${code}). Please try the file again.`;
+    }
+  }
+  if (msg.includes("Failed to fetch") || msg.includes("NetworkError") || msg.toLowerCase().includes("network")) {
+    return "Network error during upload. Check your connection and try again.";
+  }
+  return "Upload failed. Please try the file again.";
+}
+
+/**
+ * Restores a saved set of attachments directly into the pending attachment
+ * list without triggering re-uploads. Used during error recovery so files
+ * that were already successfully uploaded retain their Files API URI.
+ */
+export function restoreAttachments(atts: FileAttachment[]): void {
+  setPendingAttachments([...atts]);
+}
+
+/**
+ * Adds a file to the pending attachments list and immediately begins
+ * uploading it to the Files API. The attachment appears in the UI straight
+ * away with `uploading: true`; on failure the attachment is removed and
+ * `fileUploadError` is set with a friendly message.
+ */
 export async function addAttachment(file: File): Promise<void> {
-  const base64 = await readFileAsBase64(file);
-  const isImage = file.type.startsWith("image/");
+  setFileUploadError(null);
+  const mimeType = file.type || "application/octet-stream";
+  const isImage = mimeType.startsWith("image/");
+
+  // Generate thumbnail before upload so the UI shows a spinner immediately.
   let preview: string | undefined;
   if (isImage) {
     preview = await readFileAsDataUrl(file);
   }
+
+  const id = crypto.randomUUID();
   const attachment: FileAttachment = {
-    id: crypto.randomUUID(),
+    id,
     file,
-    mimeType: file.type || "application/octet-stream",
-    base64,
+    mimeType,
     preview,
+    uploading: true,
   };
   setPendingAttachments(produce((draft) => draft.push(attachment)));
+
+  // Upload in the background; remove the entry on failure.
+  try {
+    const result = await uploadFile(file, mimeType, file.name);
+    setPendingAttachments(produce((draft) => {
+      const idx = draft.findIndex((a) => a.id === id);
+      if (idx !== -1) {
+        draft[idx].uploading = false;
+        draft[idx].fileUri = result.fileUri;
+        draft[idx].expiresAt = result.expiresAt;
+        draft[idx].apiKeyHint = result.apiKeyHint;
+      }
+    }));
+  } catch (err) {
+    // Remove failed attachments so they don't block sending.
+    setPendingAttachments(produce((draft) => {
+      const idx = draft.findIndex((a) => a.id === id);
+      if (idx !== -1) draft.splice(idx, 1);
+    }));
+    setFileUploadError(friendlyUploadError(err));
+  }
 }
 
 export function removeAttachment(id: string): void {
@@ -171,35 +256,42 @@ export function clearAttachments(): void {
 }
 
 /**
- * Populate pending attachments from existing message parts (for edit mode).
- * Reconstructs FileAttachment objects from stored inlineData parts.
+ * Populates pending attachments from existing message parts (for edit mode).
+ *
+ * For `fileData` parts: creates a FileAttachment stub using the stored URI.
+ * If the file is already expired it is marked with `uploadError` so the UI
+ * can show the error state. The user can remove the attachment and re-attach
+ * the file to get a fresh upload.
+ *
+ * `inlineData` parts are not restored as editable attachments. User messages
+ * no longer carry `inlineData` after the v5 DB migration. Model messages carry
+ * `inlineData` for generated images but are never passed to this function.
  */
 export function loadAttachmentsFromParts(parts: MessagePart[]): void {
+  const now = Date.now();
   const atts: FileAttachment[] = [];
   for (const part of parts) {
-    if (part.type === "inlineData") {
+    if (part.type === "fileData") {
       const isImage = part.mimeType.startsWith("image/");
-      const preview = isImage ? `data:${part.mimeType};base64,${part.data}` : undefined;
-      const byteString = atob(part.data);
-      const ab = new ArrayBuffer(byteString.length);
-      const ia = new Uint8Array(ab);
-      for (let i = 0; i < byteString.length; i++) {
-        ia[i] = byteString.charCodeAt(i);
-      }
-      const file = new File([ab], part.label || "file", { type: part.mimeType });
+      const expired = part.expiresAt <= now;
       atts.push({
         id: crypto.randomUUID(),
-        file,
+        // Stub File with no bytes; actual content lives in the Files API.
+        file: new File([], part.fileName, { type: part.mimeType }),
         mimeType: part.mimeType,
-        base64: part.data,
-        preview,
+        preview: isImage ? part.preview : undefined,
+        uploading: false,
+        fileUri: part.fileUri,
+        expiresAt: part.expiresAt,
+        apiKeyHint: part.apiKeyHint,
+        uploadError: expired ? "File has expired. Please re-attach to include it." : undefined,
       });
     }
   }
   setPendingAttachments(atts);
 }
 
-// --- Actions ---
+// === Actions ===
 
 export async function loadConversations(): Promise<void> {
   const all = await db.conversations.orderBy("updatedAt").reverse().toArray();
@@ -215,13 +307,14 @@ export async function selectConversation(id: string | null): Promise<void> {
       searchEnabled: searchEnabled(),
       urlContextEnabled: urlContextEnabled(),
       thinkingEnabled: thinkingEnabled(),
-      thinkingBudget: thinkingBudget(),
       thinkingLevel: thinkingLevel(),
+      codeExecutionEnabled: codeExecutionEnabled(),
     });
   }
 
   setActiveConversationId(id);
   setChatError(null);
+  setFileUploadError(null);
 
   if (id) {
     // Restore settings from the incoming conversation
@@ -231,13 +324,27 @@ export async function selectConversation(id: string | null): Promise<void> {
       clampThinkingLevelForModel(conv.model);
       setSearchEnabled(conv.searchEnabled ?? false);
       setUrlContextEnabled(conv.urlContextEnabled ?? false);
+      setCodeExecutionEnabled(conv.codeExecutionEnabled ?? false);
+      // Disable URL context if the restored model does not support it.
+      clampUrlContextForModel(conv.model);
       if (conv.thinkingEnabled !== undefined) setThinkingEnabled(conv.thinkingEnabled);
-      if (conv.thinkingBudget !== undefined) setThinkingBudget(conv.thinkingBudget);
       if (conv.thinkingLevel !== undefined) setThinkingLevel(conv.thinkingLevel as "low" | "medium" | "high");
     }
 
     const msgs = await db.messages.where("conversationId").equals(id).sortBy("createdAt");
+
+    // User may have navigated away while the DB read was in-flight.
+    if (activeConversationId() !== id) return;
+
     setMessages(msgs);
+
+    // A message completed during the DB read won't be in msgs. Append it so it
+    // isn't dropped from the UI.
+    const pending = pendingCompletedMessages.get(id);
+    pendingCompletedMessages.delete(id);
+    if (pending && !msgs.some((m) => m.id === pending.id)) {
+      setMessages(produce((draft) => draft.push(pending)));
+    }
 
     // Load branch state first so we can check stream branch context
     await loadBranchState(id);
@@ -264,6 +371,8 @@ export async function selectConversation(id: string | null): Promise<void> {
     setStreamingThinking("");
   }
   setStreamingImages([]);
+  setStreamingCodeBlocks([]);
+  setStreamingCodeResults([]);
 }
 
 export async function createConversation(title?: string): Promise<string> {
@@ -275,8 +384,8 @@ export async function createConversation(title?: string): Promise<string> {
     searchEnabled: searchEnabled(),
     urlContextEnabled: urlContextEnabled(),
     thinkingEnabled: thinkingEnabled(),
-    thinkingBudget: thinkingBudget(),
     thinkingLevel: thinkingLevel(),
+    codeExecutionEnabled: codeExecutionEnabled(),
     createdAt: now,
     updatedAt: now,
   };
@@ -295,6 +404,10 @@ export async function deleteConversation(id: string): Promise<void> {
     setStreamingConvIds(produce((d) => { delete d[id]; }));
     setStreamingBranchCtx(produce((d) => { delete d[id]; }));
   }
+  pendingCompletedMessages.delete(id);
+  for (const [key, msg] of pendingCompletedBranchMessages) {
+    if (msg.conversationId === id) pendingCompletedBranchMessages.delete(key);
+  }
 
   await db.conversations.delete(id);
   await db.messages.where("conversationId").equals(id).delete();
@@ -309,7 +422,7 @@ export async function deleteConversation(id: string): Promise<void> {
   }
 }
 
-// --- Conversation Management: Rename, Pin, Archive ---
+// === Conversation Management: Rename, Pin, Archive ===
 
 export async function renameConversation(id: string, title: string): Promise<void> {
   const trimmed = title.trim();
@@ -352,7 +465,7 @@ export async function toggleArchiveConversation(id: string): Promise<void> {
   }
 }
 
-// --- Batch Conversation Operations ---
+// === Batch Conversation Operations ===
 
 export async function deleteConversations(ids: string[]): Promise<void> {
   for (const id of ids) {
@@ -362,6 +475,10 @@ export async function deleteConversations(ids: string[]): Promise<void> {
       backgroundStreams.delete(id);
       setStreamingConvIds(produce((d) => { delete d[id]; }));
       setStreamingBranchCtx(produce((d) => { delete d[id]; }));
+    }
+    pendingCompletedMessages.delete(id);
+    for (const [key, msg] of pendingCompletedBranchMessages) {
+      if (msg.conversationId === id) pendingCompletedBranchMessages.delete(key);
     }
     await db.messages.where("conversationId").equals(id).delete();
     await db.thoughtSignatures.where("conversationId").equals(id).delete();
@@ -437,6 +554,8 @@ export async function deleteAllConversations(): Promise<void> {
     bg.abortController.abort();
   }
   backgroundStreams.clear();
+  pendingCompletedMessages.clear();
+  pendingCompletedBranchMessages.clear();
   setStreamingConvIds({});
   setStreamingBranchCtx({});
 
@@ -448,7 +567,7 @@ export async function deleteAllConversations(): Promise<void> {
   await selectConversation(null);
 }
 
-// --- Streaming Control ---
+// === Streaming Control ===
 
 export function stopStreaming(): void {
   const convId = activeConversationId();
@@ -465,9 +584,11 @@ export function stopStreaming(): void {
   setStreamingText("");
   setStreamingThinking("");
   setStreamingImages([]);
+  setStreamingCodeBlocks([]);
+  setStreamingCodeResults([]);
 }
 
-// --- Branch Operations ---
+// === Branch Operations ===
 
 async function loadBranchState(conversationId: string): Promise<void> {
   const branches = await db.messageBranches.where("conversationId").equals(conversationId).toArray();
@@ -481,17 +602,13 @@ async function loadBranchState(conversationId: string): Promise<void> {
     state[b.branchGroupId].total = Math.max(state[b.branchGroupId].total, b.branchIndex + 1);
   }
 
-  // The active branch is whichever one is currently live in messages (not stored
-  // as a snapshot).  Determine it by checking which branchIndex has NO snapshot
-  // matching the current messages — i.e. the messages ARE the active branch.
-  // Fallback: the highest index that isn't stored as a snapshot, or simply the
-  // max index.  For simplicity we check the messages for branchGroupId presence.
+  // The active branch is the live messages not stored as a snapshot. Find it by
+  // checking which branchIndex has no matching snapshot.
   const msgs = await db.messages.where("conversationId").equals(conversationId).sortBy("createdAt");
   for (const groupId of Object.keys(state)) {
     const branchMsg = msgs.find((m) => m.branchGroupId === groupId);
     if (branchMsg) {
-      // The live messages represent one branch.  Figure out which index they
-      // correspond to by checking snapshots.
+      // Match live messages against stored snapshots to find the active index.
       const liveSnapshot = msgs.slice(msgs.indexOf(branchMsg));
       const groupBranches = branches.filter((b) => b.branchGroupId === groupId);
       let foundActive = false;
@@ -504,7 +621,7 @@ async function loadBranchState(conversationId: string): Promise<void> {
         }
       }
       if (!foundActive) {
-        // Live messages don't match any stored snapshot — they are the newest branch
+        // Live messages don't match any stored snapshot; they are the newest branch
         state[groupId].total += 1;
         state[groupId].activeIndex = state[groupId].total - 1;
       }
@@ -526,6 +643,8 @@ export async function navigateBranch(branchGroupId: string, targetIndex: number)
     setStreamingText("");
     setStreamingThinking("");
     setStreamingImages([]);
+    setStreamingCodeBlocks([]);
+    setStreamingCodeResults([]);
   }
 
   // Find the branch point user message
@@ -581,6 +700,20 @@ export async function navigateBranch(branchGroupId: string, targetIndex: number)
   // Reload messages
   const allMsgs = await db.messages.where("conversationId").equals(convId).sortBy("createdAt");
   setMessages(allMsgs);
+
+  // If a stream completed while navigateBranch was reading, the message may not
+  // be in allMsgs yet. Append it to avoid an empty assistant turn.
+  const branchKey = `${branchGroupId}:${targetIndex}`;
+  const pendingBranchMsg = pendingCompletedBranchMessages.get(branchKey);
+  if (
+    pendingBranchMsg !== undefined &&
+    pendingBranchMsg.conversationId === convId &&
+    !allMsgs.some((m) => m.id === pendingBranchMsg.id)
+  ) {
+    pendingCompletedBranchMessages.delete(branchKey);
+    await db.messages.put(pendingBranchMsg);
+    setMessages(produce((d) => { d.push(pendingBranchMsg); }));
+  }
 
   // Update active index
   setBranchState(produce((d) => {
@@ -639,9 +772,11 @@ export async function branchToNewChat(messageId: string): Promise<void> {
   setStreamingText("");
   setStreamingThinking("");
   setStreamingImages([]);
+  setStreamingCodeBlocks([]);
+  setStreamingCodeResults([]);
 }
 
-// --- Retry / Edit ---
+// === Retry / Edit ===
 
 export async function retryMessage(): Promise<void> {
   const convId = activeConversationId();
@@ -669,7 +804,8 @@ export async function retryMessage(): Promise<void> {
 
   // Rebuild and stream
   const remainingMsgs = await db.messages.where("conversationId").equals(convId).sortBy("createdAt");
-  const contents = buildContentsFromMessages(remainingMsgs);
+  const keyHint = await getCurrentApiKeyHint();
+  const contents = buildContentsFromMessages(remainingMsgs, keyHint);
   const userText = prevUserMsg?.parts.find((p) => p.type === "text")?.text ?? "";
   await startStream(convId, contents, userText, remainingMsgs.length, retryBranchCtx);
 }
@@ -740,12 +876,25 @@ export async function editMessage(messageId: string, newText: string, newAttachm
   // Build new user message parts
   const userParts: MessagePart[] = [];
 
-  // Handle attachments:
-  // - undefined = keep original non-text parts
-  // - FileAttachment[] (even empty) = replace with these attachments
+  // undefined keeps original non-text parts; FileAttachment[] replaces them.
   if (newAttachments !== undefined) {
+    const now = Date.now();
+    const currentKeyHint = await getCurrentApiKeyHint();
     for (const att of newAttachments) {
-      userParts.push({ type: "inlineData", mimeType: att.mimeType, data: att.base64, label: att.file.name });
+      if (att.uploading || att.uploadError) continue;
+      if (att.fileUri && att.expiresAt && att.expiresAt > now && att.apiKeyHint === currentKeyHint) {
+        userParts.push({
+          type: "fileData",
+          mimeType: att.mimeType,
+          fileUri: att.fileUri,
+          expiresAt: att.expiresAt,
+          apiKeyHint: att.apiKeyHint!,
+          fileName: att.file.name,
+          ...(att.preview ? { preview: att.preview } : {}),
+        });
+      }
+      // Expired, key-mismatched, or failed uploads are silently skipped from the
+      // API request but remain visible in the UI.
     }
   } else {
     for (const part of toPlain(originalMsg.parts)) {
@@ -769,8 +918,7 @@ export async function editMessage(messageId: string, newText: string, newAttachm
   };
   await db.messages.put(userMsg);
 
-  // Update branch state BEFORE pushing the message so the branch navigator
-  // renders immediately when the new message appears in <For>.
+  // Update branch state before pushing so the navigator renders immediately.
   setBranchState(produce((d) => {
     d[branchGroupId!] = { total: newBranchIndex + 1, activeIndex: newBranchIndex };
   }));
@@ -779,7 +927,8 @@ export async function editMessage(messageId: string, newText: string, newAttachm
 
   // Stream response
   const allMsgs = await db.messages.where("conversationId").equals(convId).sortBy("createdAt");
-  const contents = buildContentsFromMessages(allMsgs);
+  const keyHint = await getCurrentApiKeyHint();
+  const contents = buildContentsFromMessages(allMsgs, keyHint);
   const editAttachments = newAttachments ? [...newAttachments] : [];
 
   await startStream(convId, contents, newText, allMsgs.length, {
@@ -811,12 +960,11 @@ export async function editMessage(messageId: string, newText: string, newAttachm
       }
     }
 
-    // Reload messages and revert branch state atomically so the UI never
-    // renders with stale branch counts.
+    // Reload and revert atomically so the UI never renders stale branch counts.
     const restored = await db.messages.where("conversationId").equals(convId!).sortBy("createdAt");
 
     if (currentBranchCount <= 1) {
-      // First edit failed — remove all branch artifacts
+      // First edit failed; remove all branch artifacts
       const allBranches = await db.messageBranches
         .where("branchGroupId").equals(branchGroupId!)
         .toArray();
@@ -828,8 +976,7 @@ export async function editMessage(messageId: string, newText: string, newAttachm
         setBranchState(produce((d) => { delete d[branchGroupId!]; }));
       });
     } else {
-      // Subsequent edit failed — remove any stale branch record for the
-      // failed new index and revert to previous count.
+    // Subsequent edit failed; remove stale branch record and revert count.
       const stale = await db.messageBranches
         .where("branchGroupId").equals(branchGroupId!)
         .filter((b) => b.branchIndex === newBranchIndex)
@@ -850,9 +997,20 @@ export async function editMessage(messageId: string, newText: string, newAttachm
   });
 }
 
-// --- Conversation History → GeminiContent[] ---
+// === Conversation History -> GeminiContent[] ===
 
-function buildContentsFromMessages(msgs: Message[]): GeminiContent[] {
+/**
+ * Converts stored messages to the GeminiContent[] format expected by the API.
+ *
+ * fileData parts are included only when they are still valid for the current
+ * request: not expired AND uploaded with the same API key (identified by
+ * `currentApiKeyHint`). Invalid fileData parts are silently dropped from the
+ * API payload while remaining visible in the UI.
+ *
+ * inlineData parts (model-generated images) are always included.
+ */
+function buildContentsFromMessages(msgs: Message[], currentApiKeyHint: string | null): GeminiContent[] {
+  const now = Date.now();
   const raw = msgs.map((msg) => ({
     role: msg.role,
     parts: msg.parts
@@ -868,21 +1026,41 @@ function buildContentsFromMessages(msgs: Message[]): GeminiContent[] {
             };
           case "inlineData":
             return { inlineData: { mimeType: p.mimeType, data: p.data } };
+          case "fileData": {
+            // Drop expired files; their content is gone from the Files API.
+            if (p.expiresAt <= now) return null;
+      // Drop files uploaded with a different key; the Files API restricts access
+      // to the key that performed the upload.
+            if (currentApiKeyHint !== null && p.apiKeyHint !== currentApiKeyHint) return null;
+            return { fileData: { mimeType: p.mimeType, fileUri: p.fileUri } };
+          }
           case "functionCall":
             return { functionCall: { name: p.name, args: p.args, ...(p.id ? { id: p.id } : {}) } };
           case "functionResponse":
             return { functionResponse: { name: p.name, response: p.response, ...(p.id ? { id: p.id } : {}) } };
+          case "executableCode":
+            return { executableCode: { language: p.language, code: p.code } };
+          case "codeExecutionResult":
+            return { codeExecutionResult: { outcome: p.outcome, output: p.output } };
           case "searchGrounding":
-            return null; // Not sent back to API
+            return null; // not sent back to the API
           default:
             return null;
         }
       })
-      .filter((p): p is GeminiContentPart => p !== null && (p.text !== "" || !!p.inlineData || !!p.functionCall || !!p.functionResponse)),
+      .filter((p): p is GeminiContentPart => p !== null && (
+        p.text !== "" ||
+        !!p.inlineData ||
+        !!p.fileData ||
+        !!p.functionCall ||
+        !!p.functionResponse ||
+        !!p.executableCode ||
+        !!p.codeExecutionResult
+      )),
   })).filter((c) => c.parts.length > 0);
 
-  // Ensure strict user/model alternation required by the API.
-  // Insert synthetic placeholder messages where consecutive same-role entries occur.
+  // Enforce strict user/model alternation. Insert placeholders where consecutive
+  // same-role entries occur.
   const result: GeminiContent[] = [];
   for (const entry of raw) {
     if (result.length > 0 && result[result.length - 1].role === entry.role) {
@@ -891,10 +1069,28 @@ function buildContentsFromMessages(msgs: Message[]): GeminiContent[] {
     }
     result.push(entry);
   }
+
+  // The API requires a leading user message. A v3.2 message containing only
+  // inlineData may have been stripped to empty parts by the v5 migration and
+  // filtered out above, leaving the model's response first.
+  if (result.length > 0 && result[0].role !== "user") {
+    result.unshift({ role: "user", parts: [{ text: "..." }] });
+  }
+
   return result;
 }
 
-// --- Build active tools ---
+// === Build Active Tools ===
+
+/**
+ * Disables URL Context for the given model if it does not support it.
+ * Call after model selection changes or when restoring per-conversation settings.
+ */
+export function clampUrlContextForModel(modelId: string): void {
+  if (!modelSupportsUrlContext(modelId) && urlContextEnabled()) {
+    setUrlContextEnabled(false);
+  }
+}
 
 function buildActiveTools(): GeminiTool[] {
   const tools: GeminiTool[] = [];
@@ -904,18 +1100,22 @@ function buildActiveTools(): GeminiTool[] {
   if (urlContextEnabled()) {
     tools.push({ urlContext: {} as Record<string, never> });
   }
+  if (codeExecutionEnabled() && modelSupportsCodeExecution(selectedModel())) {
+    tools.push({ codeExecution: {} as Record<string, never> });
+  }
   return tools;
 }
 
-// --- Build generation config ---
+// === Build Generation Config ===
 
 function buildGenerationConfig(model: string): GeminiGenerationConfig | undefined {
   if (!modelSupportsThinking(model)) return undefined;
 
   const enabled = thinkingEnabled();
 
-  if (isGemini3Model(model)) {
-    // Gemini 3 Pro: always thinks — ignore the toggle
+  if (usesLevelBasedThinking(model)) {
+    // Gemini 3.x and Gemma 4 use the thinkingLevel parameter. alwaysThinking
+    // models cannot disable thinking.
     if (modelAlwaysThinking(model)) {
       return {
         maxOutputTokens: 65536,
@@ -925,13 +1125,15 @@ function buildGenerationConfig(model: string): GeminiGenerationConfig | undefine
         },
       };
     }
-    // Gemini 3 Flash: "minimal" when thinking is disabled
+    // Thinking disabled: send minimal for lowest latency.
     if (!enabled) {
       return {
         maxOutputTokens: 65536,
         thinkingConfig: { thinkingLevel: "minimal" },
       };
     }
+    // Thinking enabled: use the user-selected level.
+    // For Gemma 4 this is always "high" (only user-selectable level).
     return {
       maxOutputTokens: 65536,
       thinkingConfig: {
@@ -941,22 +1143,11 @@ function buildGenerationConfig(model: string): GeminiGenerationConfig | undefine
     };
   }
 
-  if (!enabled) {
-    return { maxOutputTokens: 65536 };
-  }
-
-  // Gemini 2.5 and others: numeric budget
-  const budget = thinkingBudget();
-  return {
-    maxOutputTokens: Math.max(65536, budget + 1024),
-    thinkingConfig: {
-      includeThoughts: true,
-      thinkingBudget: budget,
-    },
-  };
+    // Unreachable with current models but preserved as a type guard.
+  return undefined;
 }
 
-// --- Thought Signature Cache ---
+// === Thought Signature Cache ===
 
 async function cacheThoughtSignature(
   conversationId: string,
@@ -974,9 +1165,7 @@ async function cacheThoughtSignature(
   });
 }
 
-// --- Title Generation ---
-
-const TITLE_MODEL = "gemini-2.5-flash-lite";
+// === Title Generation ===
 
 async function generateTitle(userText: string, modelText: string, convId: string): Promise<void> {
   try {
@@ -1010,11 +1199,11 @@ async function generateTitle(userText: string, modelText: string, convId: string
       }));
     }
   } catch (err) {
-    // Title generation failed — fallback title is already set
+    // Title generation failed; fallback title is already set
   }
 }
 
-// --- Core Streaming Engine ---
+// === Core Streaming Engine ===
 
 /**
  * Starts a streaming response for a conversation. Supports background streaming:
@@ -1047,6 +1236,8 @@ async function startStream(
   let lastThoughtSignature: string | undefined;
   const collectedParts: MessagePart[] = [];
   const collectedImages: GeminiInlineData[] = [];
+  const collectedCodeBlocks: { language: string; code: string }[] = [];
+  const collectedCodeResults: { outcome: string; output: string }[] = [];
   let groundingResult: { queries: string[]; sources: { uri: string; title: string }[] } | null = null;
 
   // Register background stream
@@ -1058,6 +1249,8 @@ async function startStream(
     setStreamingText("");
     setStreamingThinking("");
     setStreamingImages([]);
+    setStreamingCodeBlocks([]);
+    setStreamingCodeResults([]);
   }
 
   const callbacks: StreamCallbacks = {
@@ -1077,6 +1270,14 @@ async function startStream(
     onInlineData: (data) => {
       collectedImages.push(data);
       if (isViewing()) setStreamingImages(produce((draft) => draft.push(data)));
+    },
+    onExecutableCode: (block) => {
+      collectedCodeBlocks.push(block);
+      if (isViewing()) setStreamingCodeBlocks(produce((draft) => draft.push(block)));
+    },
+    onCodeExecutionResult: (result) => {
+      collectedCodeResults.push(result);
+      if (isViewing()) setStreamingCodeResults(produce((draft) => draft.push(result)));
     },
     onGroundingMetadata: (metadata: GeminiGroundingMetadata) => {
       const queries = metadata.webSearchQueries ?? [];
@@ -1119,6 +1320,15 @@ async function startStream(
 
       parts.push(...collectedParts);
 
+      // Code execution parts and images always precede the text response.
+      for (const block of collectedCodeBlocks) {
+        parts.push({ type: "executableCode", language: block.language, code: block.code });
+      }
+      for (const result of collectedCodeResults) {
+        parts.push({ type: "codeExecutionResult", outcome: result.outcome, output: result.output });
+      }
+
+      // Inline images from code execution or model generation.
       for (const img of collectedImages) {
         parts.push({ type: "inlineData", mimeType: img.mimeType, data: img.data });
       }
@@ -1135,8 +1345,7 @@ async function startStream(
         });
       }
 
-      // For branch operations (edits), if an error occurred, always recover
-      // regardless of partial content — revert the branch entirely.
+      // On edit error, recover regardless of partial content and revert the branch.
       const shouldRecoverBranch = hadError && branchCtx && onErrorRecovery && isViewing();
 
       if (parts.length > 0 && !shouldRecoverBranch) {
@@ -1151,9 +1360,13 @@ async function startStream(
         if (isViewing()) {
           // Normal: save to DB and push to UI
           await db.messages.put(assistantMsg);
+          // Record before push so selectConversation can reconcile if it races.
+          pendingCompletedMessages.set(convId, assistantMsg);
           setMessages(produce((draft) => draft.push(assistantMsg)));
         } else if (branchCtx) {
-          // Stream completed while viewing a different branch.
+          // Record before the DB write so navigateBranch can reconcile if it races.
+          const branchKey = `${branchCtx.branchGroupId}:${branchCtx.branchIndex}`;
+          pendingCompletedBranchMessages.set(branchKey, assistantMsg);
           // Append model response to the branch snapshot in messageBranches.
           const branchRecord = await db.messageBranches
             .where("branchGroupId").equals(branchCtx.branchGroupId)
@@ -1163,10 +1376,44 @@ async function startStream(
             await db.messageBranches.update(branchRecord.id, {
               snapshot: [...branchRecord.snapshot, assistantMsg],
             });
+          } else {
+            // No snapshot exists: the user switched conversations without navigating
+            // away from this branch first. Build the snapshot from db.messages.
+            const liveMsgs = await db.messages
+              .where("conversationId").equals(convId)
+              .sortBy("createdAt");
+            const branchPointIdx = liveMsgs.findIndex(
+              (m) => m.branchGroupId === branchCtx!.branchGroupId,
+            );
+            const snapshot =
+              branchPointIdx !== -1
+                ? [...liveMsgs.slice(branchPointIdx), assistantMsg]
+                : [assistantMsg];
+            await db.messageBranches.put({
+              id: crypto.randomUUID(),
+              conversationId: convId,
+              branchGroupId: branchCtx.branchGroupId,
+              branchIndex: branchCtx.branchIndex,
+              snapshot,
+              createdAt: Date.now(),
+            });
+            // Only write to db.messages when on a different conversation. Same conv,
+            // different branch: db.messages holds the other branch's data.
+            if (activeConversationId() !== convId) {
+              // Set pending before the put so selectConversation can reconcile on a race.
+              pendingCompletedMessages.set(convId, assistantMsg);
+              await db.messages.put(assistantMsg);
+            }
+          }
+          // navigateBranch will now find the message via DB, so clean up the pending
+          // entry if it hasn't been consumed yet.
+          if (pendingCompletedBranchMessages.get(branchKey) === assistantMsg) {
+            pendingCompletedBranchMessages.delete(branchKey);
           }
         } else {
-          // No branch context, not viewing — still save to DB (background conv)
+          // Background conversation: still save to DB and record for reconciliation.
           await db.messages.put(assistantMsg);
+          pendingCompletedMessages.set(convId, assistantMsg);
         }
 
         await db.conversations.update(convId, { updatedAt: Date.now() });
@@ -1181,9 +1428,7 @@ async function startStream(
         }
       }
 
-      // Error recovery: revert orphaned user message / branch and restore input.
-      // Capture viewing state before recovery (recovery changes activeIndex,
-      // which would make isViewing() return false afterwards).
+      // Capture viewing state before recovery because recovery mutates activeIndex.
       const wasViewing = isViewing();
 
       if (shouldRecoverBranch) {
@@ -1196,6 +1441,8 @@ async function startStream(
         setStreamingText("");
         setStreamingThinking("");
         setStreamingImages([]);
+        setStreamingCodeBlocks([]);
+        setStreamingCodeResults([]);
       }
     },
   };
@@ -1203,7 +1450,7 @@ async function startStream(
   try {
     await streamChat(model, contents, generationConfig, getActiveSystemInstruction(), callbacks, controller.signal, tools);
   } catch (err) {
-    // Network / fetch error — streamChat threw before callbacks fired
+    // Network error: streamChat threw before callbacks fired.
     backgroundStreams.delete(convId);
     setStreamingConvIds(produce((d) => { delete d[convId]; }));
     setStreamingBranchCtx(produce((d) => { delete d[convId]; }));
@@ -1212,20 +1459,22 @@ async function startStream(
       setStreamingText("");
       setStreamingThinking("");
       setStreamingImages([]);
+      setStreamingCodeBlocks([]);
+      setStreamingCodeResults([]);
       if (onErrorRecovery) await onErrorRecovery();
     }
   }
 }
 
-// --- Main Send Message ---
+// === Main Send Message ===
 
 export async function sendMessage(text: string): Promise<void> {
   setChatError(null);
 
   let convId = activeConversationId();
 
-  // Allow sending even if another conversation is streaming (background streaming)
-  // But block if THIS conversation is already streaming
+  // Block only if this conversation is already streaming (background streaming
+  // on other conversations is allowed).
   if (convId && streamingConvIds[convId]) return;
 
   if (!convId) {
@@ -1234,15 +1483,24 @@ export async function sendMessage(text: string): Promise<void> {
 
   // Build user message parts
   const userParts: MessagePart[] = [];
+  const now = Date.now();
+  const currentKeyHint = await getCurrentApiKeyHint();
 
   const attachments = [...pendingAttachments];
   for (const att of attachments) {
-    userParts.push({
-      type: "inlineData",
-      mimeType: att.mimeType,
-      data: att.base64,
-      label: att.file.name,
-    });
+    if (att.uploading || att.uploadError) continue;
+    if (att.fileUri && att.expiresAt && att.expiresAt > now && att.apiKeyHint === currentKeyHint) {
+      userParts.push({
+        type: "fileData",
+        mimeType: att.mimeType,
+        fileUri: att.fileUri,
+        expiresAt: att.expiresAt,
+        apiKeyHint: att.apiKeyHint!,
+        fileName: att.file.name,
+        ...(att.preview ? { preview: att.preview } : {}),
+      });
+    }
+    // Expired, key-mismatched, or failed uploads are skipped silently.
   }
 
   if (text.trim()) {
@@ -1262,7 +1520,7 @@ export async function sendMessage(text: string): Promise<void> {
   setMessages(produce((draft) => draft.push(userMsg)));
 
   const allMsgs = await db.messages.where("conversationId").equals(convId).sortBy("createdAt");
-  const contents = buildContentsFromMessages(allMsgs);
+  const contents = buildContentsFromMessages(allMsgs, currentKeyHint);
 
   await startStream(convId, contents, text, allMsgs.length, undefined, async () => {
     // Remove orphaned user message from DB and store
@@ -1278,7 +1536,7 @@ export async function sendMessage(text: string): Promise<void> {
   });
 }
 
-// --- Session Recovery ---
+// === Session Recovery ===
 
 export async function recoverSession(conversationId: string): Promise<void> {
   const conv = await db.conversations.get(conversationId);

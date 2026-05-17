@@ -1,22 +1,24 @@
 import { createSignal } from "solid-js";
 import { AVAILABLE_MODELS } from "../api/types";
 
-// --- State ---
+// === State ===
 
 const [thinkingEnabled, setThinkingEnabled] = createSignal(true);
-const [thinkingBudget, setThinkingBudget] = createSignal(8192);
 const [thinkingLevel, setThinkingLevel] = createSignal<"low" | "medium" | "high">("high");
 
 export {
   thinkingEnabled, setThinkingEnabled,
-  thinkingBudget, setThinkingBudget,
   thinkingLevel, setThinkingLevel,
 };
 
-// --- Helpers ---
+// === Helpers ===
 
-export function isGemini3Model(modelId: string): boolean {
-  return modelId.includes("gemini-3");
+/**
+ * Models that declare thinkingLevels use the level-based parameter.
+ */
+export function usesLevelBasedThinking(modelId: string): boolean {
+  const model = AVAILABLE_MODELS.find((m) => m.id === modelId);
+  return !!(model?.thinkingLevels && model.thinkingLevels.length > 0);
 }
 
 export function modelSupportsThinking(modelId: string): boolean {

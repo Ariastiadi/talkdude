@@ -47,8 +47,14 @@ jobs:
           cp src-tauri/target/release/bundle/msi/*.msi windows-release/lumi-ai-windows-x64.msi
           ls -lh windows-release/
 
-      - name: Upload Windows artifacts
+      - name: Upload NSIS installer
         uses: actions/upload-artifact@v6
         with:
-          name: lumi-ai-windows
-          path: windows-release/*
+          name: lumi-ai-windows-x64-setup.exe
+          path: windows-release/lumi-ai-windows-x64-setup.exe
+
+      - name: Upload MSI installer
+        uses: actions/upload-artifact@v6
+        with:
+          name: lumi-ai-windows-x64.msi
+          path: windows-release/lumi-ai-windows-x64.msi

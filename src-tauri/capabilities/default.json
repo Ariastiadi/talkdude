@@ -10,11 +10,10 @@
     {
       "identifier": "http:default",
       "allow": [
-        { "url": "https://oauth2.googleapis.com/**" },
-        { "url": "https://www.googleapis.com/**" },
-        { "url": "https://cloudcode-pa.googleapis.com/**" },
-        { "url": "https://accounts.google.com/**" }
+        { "url": "https://generativelanguage.googleapis.com/**" }
       ]
-    }
+    },
+    "fs:allow-write-file",
+    "fs:scope-download-recursive"
   ]
 }

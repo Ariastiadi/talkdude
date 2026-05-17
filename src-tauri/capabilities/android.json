@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "android",
+  "description": "Android-specific capabilities: MediaStore file access via tauri-plugin-android-fs",
+  "platforms": ["android"],
+  "windows": ["main"],
+  "permissions": [
+    "android-fs:allow-get-android-api-level",
+    "android-fs:allow-check-public-files-permission",
+    "android-fs:allow-request-public-files-permission",
+    "android-fs:allow-create-new-public-file",
+    "android-fs:allow-write-file",
+    "android-fs:allow-set-public-file-pending",
+    "android-fs:allow-scan-public-file",
+    "android-fs:allow-remove-file"
+  ]
+}

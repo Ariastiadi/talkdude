@@ -7,7 +7,7 @@
   background: var(--md-sys-color-background);
 }
 
-/* --- Top Bar --- */
+/* === Top Bar === */
 
 .chat-topbar {
   display: flex;
@@ -31,7 +31,7 @@
   flex: 1;
 }
 
-/* --- Welcome Layout --- */
+/* === Welcome Layout === */
 
 .welcome-layout {
   display: flex;
@@ -61,7 +61,7 @@
   padding: 0;
 }
 
-/* --- Welcome Screen --- */
+/* === Welcome Screen === */
 
 .welcome-screen {
   display: flex;
@@ -107,7 +107,7 @@
   font-weight: 400;
 }
 
-/* --- Suggestion Row (below input on welcome — desktop only) --- */
+/* === Suggestion Row (below input on welcome, desktop only) === */
 
 .suggestion-row {
   display: flex;
@@ -120,7 +120,7 @@
   margin: 0 auto;
 }
 
-/* --- Welcome Suggestions (inside greeting — mobile only) --- */
+/* === Welcome Suggestions (inside greeting, mobile only) === */
 
 .welcome-suggestions {
   display: none;
@@ -156,7 +156,7 @@
   color: var(--md-sys-color-primary);
 }
 
-/* --- Messages Area --- */
+/* === Messages Area === */
 
 .chat-messages {
   flex: 1;
@@ -232,7 +232,7 @@
   border-radius: 0;
 }
 
-/* --- Message Content Wrapper --- */
+/* === Message Content Wrapper === */
 
 .message-content-wrapper {
   display: flex;
@@ -241,7 +241,7 @@
   max-width: 100%;
 }
 
-/* --- Message Actions --- */
+/* === Message Actions === */
 
 .message-actions {
   display: flex;
@@ -284,7 +284,7 @@
   --md-icon-button-icon-color: var(--md-sys-color-on-surface);
 }
 
-/* --- Thinking --- */
+/* === Thinking === */
 
 .message-thinking {
   margin-bottom: 8px;
@@ -317,11 +317,12 @@
   line-height: 1.6;
 }
 
-/* --- Inline Images --- */
+/* === Inline Images === */
 
 .message-image-container {
+  position: relative;
   margin: 8px 0;
-  display: flex;
+  display: inline-flex;
   flex-direction: column;
   gap: 4px;
 }
@@ -333,13 +334,18 @@
   object-fit: contain;
 }
 
-.image-label {
-  color: var(--md-sys-color-on-primary);
-  opacity: 0.8;
+.image-overlay-actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  opacity: 0;
+  transition: opacity 150ms var(--motion-easing-standard);
+  pointer-events: none;
 }
 
-.bubble-model .image-label {
-  color: var(--md-sys-color-on-surface-variant);
+.message-image-container:hover .image-overlay-actions {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .message-file-chip {
@@ -356,7 +362,7 @@
   --md-icon-size: 16px;
 }
 
-/* --- Edit Mode Banner (inside chat-form) --- */
+/* === Edit Mode Banner (inside chat-form) === */
 
 .edit-banner {
   display: flex;
@@ -378,7 +384,7 @@
   --md-icon-button-state-layer-width: 28px;
 }
 
-/* --- Branch Navigation --- */
+/* === Branch Navigation === */
 
 .branch-nav {
   display: inline-flex;
@@ -393,7 +399,7 @@
   user-select: none;
 }
 
-/* --- Search Grounding --- */
+/* === Search Grounding === */
 
 .search-grounding {
   margin: 8px 0;
@@ -441,7 +447,7 @@
   --md-icon-size: 14px;
 }
 
-/* --- Function Call --- */
+/* === Function Call === */
 
 .function-call-chip {
   display: inline-flex;
@@ -458,7 +464,95 @@
   --md-icon-size: 16px;
 }
 
-/* --- Typing Indicator --- */
+/* === Code Execution === */
+
+.exec-code-block {
+  margin: 8px 0;
+  border-radius: var(--md-sys-shape-corner-small);
+  background: var(--md-sys-color-surface-container-highest);
+  overflow: hidden;
+}
+
+.exec-code-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface-variant);
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+}
+
+.exec-code-header md-icon {
+  --md-icon-size: 16px;
+  color: var(--md-sys-color-primary);
+}
+
+.exec-code-pre {
+  margin: 0;
+  padding: 12px;
+  overflow-x: auto;
+  font-family: "Roboto Mono", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--md-sys-color-on-surface);
+  white-space: pre;
+}
+
+.exec-code-pre code {
+  font-family: inherit;
+}
+
+.code-exec-result {
+  margin: 8px 0;
+  border-radius: var(--md-sys-shape-corner-small);
+  overflow: hidden;
+  border: 1px solid var(--md-sys-color-outline-variant);
+}
+
+.code-exec-result.result-ok {
+  border-color: var(--md-sys-color-secondary-container);
+}
+
+.code-exec-result.result-error {
+  border-color: var(--md-sys-color-error-container);
+}
+
+.code-exec-result-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.code-exec-result.result-ok .code-exec-result-header {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+
+.code-exec-result.result-error .code-exec-result-header {
+  background: var(--md-sys-color-error-container);
+  color: var(--md-sys-color-on-error-container);
+}
+
+.code-exec-result-header md-icon {
+  --md-icon-size: 16px;
+}
+
+.code-exec-output {
+  margin: 0;
+  padding: 10px 12px;
+  font-family: "Roboto Mono", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--md-sys-color-on-surface);
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: var(--md-sys-color-surface-container);
+}
+
+/* === Typing Indicator === */
 
 .typing-indicator {
   display: flex;
@@ -483,7 +577,7 @@
   40% { transform: scale(1); opacity: 1; }
 }
 
-/* --- Error --- */
+/* === Error === */
 
 .chat-error {
   display: flex;
@@ -503,7 +597,7 @@
   flex-shrink: 0;
 }
 
-/* --- Input Area --- */
+/* === Input Area === */
 
 .chat-input-area {
   padding: 8px 16px 16px;
@@ -575,7 +669,7 @@
   flex: 1;
 }
 
-/* --- Attachment Strip --- */
+/* === Attachment Strip === */
 
 .attachment-strip {
   display: flex;
@@ -651,7 +745,61 @@
   --md-icon-size: 14px;
 }
 
-/* --- Toolbar Popup (Tools + Model) --- */
+/* Spinner shown while a file is uploading to the Files API. */
+@keyframes attachment-spin {
+  to { transform: rotate(360deg); }
+}
+
+.attachment-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--md-sys-color-outline-variant);
+  border-top-color: var(--md-sys-color-primary);
+  border-radius: 50%;
+  animation: attachment-spin 0.8s linear infinite;
+}
+
+.attachment-error-label {
+  color: var(--md-sys-color-error);
+  text-align: center;
+  font-size: 10px;
+  line-height: 1.2;
+  max-width: 80px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* Banner shown at input-area level when an upload auto-fails and is removed. */
+.upload-error-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 800px;
+  padding: 8px 12px;
+  border-radius: var(--md-sys-shape-corner-small);
+  background: var(--md-sys-color-error-container);
+  color: var(--md-sys-color-on-error-container);
+  margin-bottom: 4px;
+}
+
+.upload-error-icon {
+  --md-icon-size: 18px;
+  flex-shrink: 0;
+}
+
+.upload-error-banner .md-typescale-label-medium {
+  flex: 1;
+}
+
+.upload-error-dismiss {
+  flex-shrink: 0;
+  color: var(--md-sys-color-on-error-container);
+}
+
+/* === Toolbar Popup (Tools + Model) === */
 
 .toolbar-menu-anchor {
   position: relative;
@@ -694,7 +842,7 @@
   color: var(--md-sys-color-on-surface-variant);
 }
 
-/* --- Tool Toggles --- */
+/* === Tool Toggles === */
 
 .tool-toggle {
   display: flex;
@@ -778,7 +926,7 @@
   --md-icon-button-icon-color: var(--md-sys-color-primary);
 }
 
-/* --- Model Selector --- */
+/* === Model Selector === */
 
 .model-selector-btn {
   display: flex;
@@ -864,7 +1012,7 @@
   --md-filled-tonal-icon-button-icon-color: var(--md-sys-color-on-surface);
 }
 
-/* --- User Attachment Row (outside bubble, above text) --- */
+/* === User Attachment Row (outside bubble, above text) === */
 
 .user-attach-row {
   display: flex;
@@ -915,7 +1063,7 @@
   text-align: center;
 }
 
-/* --- Custom Instructions Popup --- */
+/* === Custom Instructions Popup === */
 
 .instructions-popup {
   min-width: min(320px, calc(100vw - 32px));
@@ -938,7 +1086,7 @@
   z-index: 1;
 }
 
-/* --- Native MD3 Buttons (predictable sizing, no material-web quirks) --- */
+/* === Native MD3 Buttons (predictable sizing, no material-web quirks) === */
 
 .icon-btn {
   display: inline-flex;
@@ -970,6 +1118,32 @@
 }
 
 .icon-btn-sm md-icon {
+  --md-icon-size: 18px;
+}
+
+/* Overlay download button on inline images. Defined after .icon-btn so source
+   order never causes transparent-background override at equal specificity. */
+.image-download-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: rgba(0, 0, 0, 0.55);
+  color: #ffffff;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition: background 150ms var(--motion-easing-standard);
+}
+
+.image-download-btn:hover {
+  background: rgba(0, 0, 0, 0.75);
+}
+
+.image-download-btn md-icon {
   --md-icon-size: 18px;
 }
 
@@ -1122,7 +1296,7 @@
   color: var(--md-sys-color-on-surface-variant);
 }
 
-/* --- Thinking Button --- */
+/* === Thinking Button === */
 
 .thinking-btn {
   display: flex;
@@ -1157,7 +1331,7 @@
   color: var(--md-sys-color-primary);
 }
 
-/* --- Thinking Popup --- */
+/* === Thinking Popup === */
 
 .thinking-popup {
   min-width: 240px;
@@ -1201,63 +1375,7 @@
   border-color: var(--md-sys-color-primary);
 }
 
-.thinking-budget {
-  padding: 4px 16px 12px;
-}
-
-.thinking-budget-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 4px;
-  color: var(--md-sys-color-on-surface-variant);
-}
-
-.thinking-budget-value {
-  color: var(--md-sys-color-primary);
-  font-weight: 600;
-}
-
-.thinking-budget-slider {
-  width: 100%;
-  height: 4px;
-  appearance: none;
-  -webkit-appearance: none;
-  background: var(--md-sys-color-surface-container-highest);
-  border-radius: 2px;
-  outline: none;
-  cursor: pointer;
-}
-
-.thinking-budget-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--md-sys-color-primary);
-  border: 2px solid var(--md-sys-color-on-primary);
-  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-  cursor: pointer;
-}
-
-.thinking-budget-slider::-moz-range-thumb {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--md-sys-color-primary);
-  border: 2px solid var(--md-sys-color-on-primary);
-  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-  cursor: pointer;
-}
-
-.thinking-budget-labels {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 4px;
-  color: var(--md-sys-color-on-surface-variant);
-}
-
-/* --- Responsive --- */
+/* === Responsive === */
 
 @media (max-width: 899px) {
   .chat-messages { padding: 16px 12px; max-width: 100%; }
@@ -1324,11 +1442,50 @@
   .model-popup { left: 0; }
   .instructions-popup { min-width: unset; }
   .thinking-popup { min-width: unset; }
-  /* Anchor is static, so badge absolute breaks — use relative + negative margin instead */
+  /* Anchor is static, so badge absolute breaks; use relative + negative margin instead */
   .tool-badge {
     position: relative;
     top: -6px;
     right: auto;
     margin-left: -10px;
   }
+}
+
+/* === Snackbar === */
+
+@keyframes snackbar-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+@keyframes snackbar-out {
+  from { opacity: 1; transform: translateX(-50%) translateY(0); }
+  to { opacity: 0; transform: translateX(-50%) translateY(8px); }
+}
+
+.snackbar {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  z-index: 300;
+  box-sizing: border-box;
+  background: var(--md-sys-color-inverse-surface);
+  color: var(--md-sys-color-inverse-on-surface);
+  border-radius: var(--md-sys-shape-corner-extra-small);
+  padding: 14px 16px;
+  min-width: 288px;
+  max-width: min(560px, calc(100vw - 32px));
+  box-shadow:
+    0 3px 8px rgba(0, 0, 0, 0.25),
+    0 1px 3px rgba(0, 0, 0, 0.15);
+  animation: snackbar-in 250ms var(--motion-easing-emphasized-decelerate) forwards;
+  pointer-events: none;
+}
+
+.snackbar--exiting {
+  animation: snackbar-out 200ms var(--motion-easing-emphasized-accelerate) forwards;
+}
+
+.snackbar-text {
+  display: block;
 }

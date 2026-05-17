@@ -1,11 +1,12 @@
-import { Show, onMount, createSignal } from "solid-js";
-import { account, initAuth } from "./lib/stores/auth";
+import { Show, onMount } from "solid-js";
+import { apiKeyDialogOpen, isOnboardingFlow, initAuth } from "./lib/stores/auth";
 import { loadConversations } from "./lib/stores/chat";
 import { loadCustomInstructions } from "./lib/stores/custom-instructions";
 import { initDB } from "./lib/db";
 import { isTauri, isMobile, platformOpenUrl } from "./lib/platform";
+import { createSignal } from "solid-js";
 
-import LoginScreen from "./components/LoginScreen";
+import LoginScreen, { ApiKeyDialog } from "./components/LoginScreen";
 import Sidebar from "./components/Sidebar";
 import ChatView from "./components/ChatView";
 import "./lib/material-web";
@@ -26,20 +27,17 @@ function App() {
     await loadCustomInstructions();
     setAppReady(true);
 
-    // --- Tauri-specific: native app behavior ---
+    // === Tauri-Specific: Native App Behavior ===
     if (isTauri()) {
-      // Restrict zoom via viewport meta — only on Tauri, not web
-      // (web must keep accessibility zoom available).
+      // Disable zoom on Tauri; web keeps accessibility zoom.
       const vp = document.querySelector('meta[name="viewport"]');
       if (vp) vp.setAttribute("content", "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no");
 
-      // Disable double-tap zoom and remove tap highlight for native feel.
-      // Applied via JS so these don't affect the web version at all.
+      // Disable double-tap zoom and tap highlight for native app feel.
       document.documentElement.style.touchAction = "manipulation";
       document.documentElement.style.setProperty("-webkit-tap-highlight-color", "transparent");
 
-      // Intercept all external link clicks (markdown links, etc.) and
-      // open them in the system browser via the opener plugin.
+      // Open external links in the system browser.
       document.addEventListener("click", (e) => {
         if (e.defaultPrevented) return;
         const anchor = (e.target as HTMLElement).closest("a[href]") as HTMLAnchorElement | null;
@@ -52,9 +50,7 @@ function App() {
       });
 
       // Desktop-only: disable zoom shortcuts and context menu.
-      // On mobile these are either irrelevant (keyboard zoom) or actively
-      // harmful (contextmenu prevention breaks the native text-selection
-      // popup with copy/share/read-aloud actions).
+      // On mobile this breaks the native text-selection popup.
       if (!isMobile()) {
         document.addEventListener("wheel", (e) => {
           if (e.ctrlKey || e.metaKey) e.preventDefault();
@@ -70,10 +66,9 @@ function App() {
       }
     }
 
-    // Wait until the browser is truly idle — all pending resources (fonts,
-    // images, sub-resources) loaded, layout settled, custom elements upgraded.
-    // On Tauri the window is still hidden so rAF won't fire; we rely on the
-    // load event + idle callback instead.
+    // Wait for the browser to finish loading resources and upgrading custom
+    // elements before showing the window. Tauri starts hidden, so rAF won't
+    // fire; use load + requestIdleCallback.
     if (document.readyState !== "complete") {
       await new Promise<void>((r) => window.addEventListener("load", () => r(), { once: true }));
     }
@@ -85,8 +80,8 @@ function App() {
       }
     });
 
-    // Show the Tauri window now that everything is fully rendered (desktop starts
-    // hidden via visible(false) to prevent FOUC / partial-render flash).
+    // Show the Tauri window now that initial render is complete.
+    // Desktop starts hidden to prevent FOUC.
     if (isTauri()) {
       try {
         const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
@@ -94,25 +89,39 @@ function App() {
       } catch (_) {}
     }
 
-    // Enable CSS transitions/animations now that the initial render is settled.
+    // Enable CSS transitions now that initial render is settled.
     document.documentElement.classList.remove("preload");
   });
 
   return (
     <Show when={appReady()} fallback={<div />}>
-    <Show when={account()} fallback={<LoginScreen />}>
-      <div class="app-shell">
-        <Show when={sidebarOpen()}>
-          <div class="sidebar-backdrop" onClick={() => setSidebarOpen(false)}></div>
-        </Show>
-        <div class={`sidebar-container ${sidebarOpen() ? "open" : ""}`}>
-          <Sidebar />
+      {/*
+        Two distinct cases for apiKeyDialogOpen():
+        1. Onboarding (no key yet): render LoginScreen full-screen, hide app shell.
+        2. Settings reconfigure: overlay ApiKeyDialog on the app shell.
+      */}
+      <Show when={apiKeyDialogOpen() && isOnboardingFlow()}>
+        <LoginScreen />
+      </Show>
+
+      {/* App shell: rendered whenever not in the full-screen onboarding flow. */}
+      <Show when={!apiKeyDialogOpen() || !isOnboardingFlow()}>
+        <div class="app-shell">
+          <Show when={sidebarOpen()}>
+            <div class="sidebar-backdrop" onClick={() => setSidebarOpen(false)}></div>
+          </Show>
+          <div class={`sidebar-container ${sidebarOpen() ? "open" : ""}`}>
+            <Sidebar />
+          </div>
+          <div class="chat-container">
+            <ChatView />
+          </div>
+          {/* Dialog overlay for reconfiguring the API key after initial setup. */}
+          <Show when={apiKeyDialogOpen() && !isOnboardingFlow()}>
+            <ApiKeyDialog />
+          </Show>
         </div>
-        <div class="chat-container">
-          <ChatView />
-        </div>
-      </div>
-    </Show>
+      </Show>
     </Show>
   );
 }

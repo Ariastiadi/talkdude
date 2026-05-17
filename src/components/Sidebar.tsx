@@ -17,7 +17,7 @@ import {
   streamingConvIds,
 } from "../lib/stores/chat";
 import type { Conversation } from "../lib/db";
-import { account, logout } from "../lib/stores/auth";
+import { apiKey, openApiKeyDialog } from "../lib/stores/auth";
 import { setSidebarOpen } from "../App";
 import { platformOpenUrl } from "../lib/platform";
 import "./Sidebar.css";
@@ -31,7 +31,6 @@ export default function Sidebar() {
   const [renameValue, setRenameValue] = createSignal("");
   const [showArchived, setShowArchived] = createSignal(false);
   const [deleteConfirmId, setDeleteConfirmId] = createSignal<string | null>(null);
-  const [logoutConfirmOpen, setLogoutConfirmOpen] = createSignal(false);
   const [selectedIds, setSelectedIds] = createSignal<Set<string>>(new Set());
   const [deleteSelectedConfirm, setDeleteSelectedConfirm] = createSignal(false);
   const [deleteAllConfirm, setDeleteAllConfirm] = createSignal(false);
@@ -39,7 +38,7 @@ export default function Sidebar() {
 
   const isSelectMode = () => selectedIds().size > 0;
 
-  // Derive selection state for context-aware toolbar actions
+  // Derive selection state for toolbar actions
   const selectedConvs = createMemo(() => {
     const ids = selectedIds();
     return conversations.filter((c) => ids.has(c.id));
@@ -355,19 +354,23 @@ export default function Sidebar() {
         <md-divider></md-divider>
         <div class="sidebar-account">
           <div class="account-info">
-            <md-icon class="account-icon">account_circle</md-icon>
+            <md-icon class="account-icon">key</md-icon>
             <span class="md-typescale-body-medium account-email">
-              {account()?.email || "Unknown"}
+              {apiKey() ? "API key configured" : "No API key set"}
             </span>
           </div>
-          <md-icon-button type="button" aria-label="Sign out" onClick={() => setLogoutConfirmOpen(true)}>
-            <md-icon>logout</md-icon>
+          <md-icon-button
+            type="button"
+            aria-label="Manage API key"
+            onClick={openApiKeyDialog}
+          >
+            <md-icon>settings</md-icon>
           </md-icon-button>
         </div>
       </div>
     </aside>
 
-    {/* Delete Confirmation Dialog — Portal to body for proper viewport centering */}
+    {/* Delete Confirmation Dialog: Portal to body for proper viewport centering */}
     <Show when={deleteConfirmId()}>
       <Portal>
         <div class="confirm-dialog-backdrop" onClick={() => setDeleteConfirmId(null)}>
@@ -398,35 +401,6 @@ export default function Sidebar() {
                 }}
               >
                 Delete
-              </button>
-            </div>
-          </div>
-        </div>
-      </Portal>
-    </Show>
-
-    {/* Logout Confirmation Dialog */}
-    <Show when={logoutConfirmOpen()}>
-      <Portal>
-        <div class="confirm-dialog-backdrop" onClick={() => setLogoutConfirmOpen(false)}>
-          <div class="confirm-dialog" onClick={(e) => e.stopPropagation()}>
-            <md-icon class="confirm-dialog-icon">logout</md-icon>
-            <h2 class="md-typescale-headline-small confirm-dialog-title">Sign out?</h2>
-            <p class="md-typescale-body-medium confirm-dialog-body">
-              You will need to sign in again to continue using Lumi AI.
-            </p>
-            <div class="confirm-dialog-actions">
-              <button class="dialog-btn dialog-btn-cancel" onClick={() => setLogoutConfirmOpen(false)}>
-                Cancel
-              </button>
-              <button
-                class="dialog-btn dialog-btn-confirm"
-                onClick={() => {
-                  setLogoutConfirmOpen(false);
-                  logout();
-                }}
-              >
-                Sign out
               </button>
             </div>
           </div>

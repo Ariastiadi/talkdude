@@ -1,12 +1,12 @@
-/* --- Material Design 3 Expressive Theme for Lumi AI --- */
+/* === Material Design 3 Expressive Theme for Lumi AI === */
 /* Expressive = larger corners, vibrant palette, playful motion, generous spacing */
 
 :root {
-  /* --- Reference Typeface --- */
+  /* === Reference Typeface === */
   --md-ref-typeface-brand: "Google Sans", "Segoe UI", system-ui, sans-serif;
   --md-ref-typeface-plain: "Google Sans Text", "Segoe UI", system-ui, sans-serif;
 
-  /* --- System Color (Light) — Material Theme Builder seed #6DB0FF --- */
+  /* === System Color (Light) - Material Theme Builder seed #6DB0FF === */
   --md-sys-color-primary: #39608F;
   --md-sys-color-on-primary: #FFFFFF;
   --md-sys-color-primary-container: #D3E4FF;
@@ -45,7 +45,7 @@
   --md-sys-color-scrim: #000000;
   --md-sys-color-surface-tint: #39608F;
 
-  /* --- Shape (Expressive = larger radii) --- */
+  /* === Shape (Expressive = larger radii) === */
   --md-sys-shape-corner-none: 0px;
   --md-sys-shape-corner-extra-small: 8px;
   --md-sys-shape-corner-small: 12px;
@@ -54,11 +54,11 @@
   --md-sys-shape-corner-extra-large: 32px;
   --md-sys-shape-corner-full: 9999px;
 
-  /* --- Elevation shadow color --- */
+  /* === Elevation shadow color === */
   --md-elevation-shadow-color: rgba(0, 0, 0, 0.15);
 }
 
-/* --- Dark Theme — Material Theme Builder seed #6DB0FF --- */
+/* === Dark Theme - Material Theme Builder seed #6DB0FF === */
 @media (prefers-color-scheme: dark) {
   :root {
     --md-sys-color-primary: #A2C9FE;
@@ -102,7 +102,7 @@
   }
 }
 
-/* --- Global Styles --- */
+/* === Global Styles === */
 
 *, *::before, *::after {
   box-sizing: border-box;
@@ -128,7 +128,7 @@ body {
   overscroll-behavior: none;
 }
 
-/* --- Native Desktop Feel --- */
+/* === Native Desktop Feel === */
 
 body, button, input, select, textarea {
   font-family: var(--md-ref-typeface-plain);
@@ -161,7 +161,7 @@ img, a {
   user-select: none;
 }
 
-/* --- Scrollbar Styling --- */
+/* === Scrollbar Styling === */
 
 ::-webkit-scrollbar {
   width: 6px;
@@ -177,7 +177,7 @@ img, a {
   background: var(--md-sys-color-outline);
 }
 
-/* --- Brand Logo Mask --- */
+/* === Brand Logo Mask === */
 .lumi-logo {
   -webkit-mask-image: url('./assets/logo.svg');
   mask-image: url('./assets/logo.svg');
@@ -189,7 +189,7 @@ img, a {
   mask-position: center;
 }
 
-/* --- Expressive Animation Tokens --- */
+/* === Expressive Animation Tokens === */
 :root {
   --motion-duration-short: 150ms;
   --motion-duration-medium: 300ms;

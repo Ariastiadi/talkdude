@@ -1,14 +1,14 @@
 import { createStore, produce } from "solid-js/store";
 import { db, type CustomInstruction } from "../db";
 
-// --- State ---
+// === State ===
 
 const [customInstructions, setCustomInstructions] = createStore<CustomInstruction[]>([]);
 const [activeInstructionIds, setActiveInstructionIds] = createStore<string[]>([]);
 
 export { customInstructions, activeInstructionIds };
 
-// --- Init ---
+// === Init ===
 
 export async function loadCustomInstructions(): Promise<void> {
   const all = await db.customInstructions.toArray();
@@ -19,7 +19,7 @@ export async function loadCustomInstructions(): Promise<void> {
   setActiveInstructionIds(defaults);
 }
 
-// --- CRUD ---
+// === CRUD ===
 
 export async function createCustomInstruction(
   name: string,
@@ -69,7 +69,7 @@ export async function deleteCustomInstruction(id: string): Promise<void> {
   }));
 }
 
-// --- Activation (stacking) ---
+// === Activation (Stacking) ===
 
 export function toggleInstructionActive(id: string): void {
   setActiveInstructionIds(produce((d) => {
@@ -82,7 +82,7 @@ export function toggleInstructionActive(id: string): void {
   }));
 }
 
-// --- Derived: combined system instruction text ---
+// === Derived: Combined System Instruction Text ===
 
 export function getActiveSystemInstruction(): string | undefined {
   const ids = activeInstructionIds;

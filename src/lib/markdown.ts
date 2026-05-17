@@ -1,15 +1,15 @@
 import MarkdownIt from "markdown-it";
-// @ts-expect-error — no type declarations available
+// @ts-expect-error: no type declarations available
 import sub from "markdown-it-sub";
-// @ts-expect-error — no type declarations available
+// @ts-expect-error: no type declarations available
 import sup from "markdown-it-sup";
-// @ts-expect-error — no type declarations available
+// @ts-expect-error: no type declarations available
 import mark from "markdown-it-mark";
 import hljs from "highlight.js";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 
-// --- KaTeX math plugin for markdown-it ---
+// === KaTeX Math Plugin for Markdown-It ===
 
 function mathInline(state: any, silent: boolean): boolean {
   const src = state.src;
@@ -114,7 +114,7 @@ function mathPlugin(md: MarkdownIt): void {
   };
 }
 
-// --- Task list post-processor ---
+// === Task List Post-Processor ===
 
 function taskListPlugin(md: MarkdownIt): void {
   md.core.ruler.after("inline", "task_lists", (state) => {

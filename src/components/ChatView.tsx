@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createSignal } from "solid-js";
+import { For, Show, createEffect, createSignal, onCleanup, untrack } from "solid-js";
 import {
   messages,
   activeConversationId,
@@ -7,6 +7,8 @@ import {
   streamingText,
   streamingThinking,
   streamingImages,
+  streamingCodeBlocks,
+  streamingCodeResults,
   chatError,
   sendMessage,
   stopStreaming,
@@ -23,20 +25,26 @@ import {
   setSearchEnabled,
   urlContextEnabled,
   setUrlContextEnabled,
+  codeExecutionEnabled,
+  setCodeExecutionEnabled,
+  fileUploadError,
+  setFileUploadError,
   pendingAttachments,
+  hasPendingUploads,
   addAttachment,
   removeAttachment,
   clearAttachments,
   loadAttachmentsFromParts,
+  restoreAttachments,
   recoveryText,
   recoveryAttachments,
   setRecoveryText,
   setRecoveryAttachments,
+  clampUrlContextForModel,
 } from "../lib/stores/chat";
 import type { Message, MessagePart } from "../lib/db";
-import { AVAILABLE_MODELS } from "../lib/api/types";
+import { AVAILABLE_MODELS, modelSupportsCodeExecution, modelSupportsUrlContext } from "../lib/api/types";
 import { renderMarkdown } from "../lib/markdown";
-import { account } from "../lib/stores/auth";
 import {
   customInstructions,
   activeInstructionIds,
@@ -47,24 +55,25 @@ import {
 } from "../lib/stores/custom-instructions";
 import {
   thinkingEnabled, setThinkingEnabled,
-  thinkingBudget, setThinkingBudget,
   thinkingLevel, setThinkingLevel,
-  isGemini3Model, modelSupportsThinking,
+  usesLevelBasedThinking, modelSupportsThinking,
   modelAlwaysThinking, getModelThinkingLevels,
   clampThinkingLevelForModel,
 } from "../lib/stores/thinking";
 import { sidebarOpen, setSidebarOpen } from "../App";
+import { isTauri, isAndroid } from "../lib/platform";
+import type { AndroidFsUri } from "tauri-plugin-android-fs-api";
 import "./ChatView.css";
 
-// --- Greetings & Suggestions (imported from constants to keep component lean) ---
+// === Greetings and Suggestions ===
 
 import {
   SUGGESTIONS,
-  MORNING_GREETINGS,
-  AFTERNOON_GREETINGS,
-  EVENING_GREETINGS,
-  NIGHT_GREETINGS,
-  SUBTITLES,
+  MORNING_GROUPS,
+  AFTERNOON_GROUPS,
+  EVENING_GROUPS,
+  NIGHT_GROUPS,
+  type ContextGroup,
 } from "./chat-constants";
 
 function pickRandom<T>(arr: T[]): T {
@@ -76,23 +85,42 @@ function pickN<T>(arr: T[], n: number): T[] {
   return shuffled.slice(0, n);
 }
 
-function getGreeting(): string {
+function getGreetingAndSubtitle(): { greeting: string; subtitle: string } {
   const hour = new Date().getHours();
-  if (hour < 5) return pickRandom(NIGHT_GREETINGS);
-  if (hour < 12) return pickRandom(MORNING_GREETINGS);
-  if (hour < 17) return pickRandom(AFTERNOON_GREETINGS);
-  if (hour < 22) return pickRandom(EVENING_GREETINGS);
-  return pickRandom(NIGHT_GREETINGS);
-}
-
-function getSubtitle(): string {
-  return pickRandom(SUBTITLES);
+  let pool: ContextGroup[];
+  if (hour < 5) pool = NIGHT_GROUPS;
+  else if (hour < 12) pool = MORNING_GROUPS;
+  else if (hour < 17) pool = AFTERNOON_GROUPS;
+  else if (hour < 22) pool = EVENING_GROUPS;
+  else pool = NIGHT_GROUPS;
+  // Picking from the same group guarantees tonal coherence between the two strings.
+  const group = pickRandom(pool);
+  return { greeting: pickRandom(group.greetings), subtitle: pickRandom(group.subtitles) };
 }
 
 export default function ChatView() {
-  let messagesEndRef: HTMLDivElement | undefined;
+  let chatMessagesRef: HTMLDivElement | undefined;
   let inputRef: HTMLTextAreaElement | undefined;
   let fileInputRef: HTMLInputElement | undefined;
+
+  // Collapse rapid reactive updates into a single scroll.
+  let scrollPending = false;
+  const scrollToBottom = () => {
+    if (scrollPending) return;
+    scrollPending = true;
+    requestAnimationFrame(() => {
+      scrollPending = false;
+      if (chatMessagesRef) {
+        chatMessagesRef.scrollTop = chatMessagesRef.scrollHeight;
+      }
+    });
+  };
+
+  createEffect(() => {
+    messages.length;
+    streamingText();
+    scrollToBottom();
+  });
 
   const [toolsMenuOpen, setToolsMenuOpen] = createSignal(false);
   const [modelMenuOpen, setModelMenuOpen] = createSignal(false);
@@ -106,18 +134,21 @@ export default function ChatView() {
   const [editingMessageId, setEditingMessageId] = createSignal<string | null>(null);
 
   // Stable greeting/subtitle/suggestions per mount
-  const greeting = getGreeting();
-  const subtitle = getSubtitle();
+  const { greeting, subtitle } = getGreetingAndSubtitle();
   const suggestions = pickN(SUGGESTIONS, 4);
 
-  const scrollToBottom = () => {
-    messagesEndRef?.scrollIntoView({ behavior: "smooth" });
-  };
-
+  // Clear edit mode on conversation change so the stale ID doesn't leak
+  // into the new context.
   createEffect(() => {
-    messages.length;
-    streamingText();
-    scrollToBottom();
+    activeConversationId(); // reactive: re-run on every conversation change
+    if (untrack(editingMessageId)) {
+      setEditingMessageId(null);
+      clearAttachments();
+      if (inputRef) {
+        inputRef.value = "";
+        inputRef.style.height = "auto";
+      }
+    }
   });
 
   // Repopulate input when error recovery data is available
@@ -129,10 +160,8 @@ export default function ChatView() {
         inputRef.style.height = "auto";
         inputRef.style.height = Math.min(inputRef.scrollHeight, 200) + "px";
       }
-      // Restore attachments
-      for (const att of recoveryAttachments) {
-        addAttachment(att.file);
-      }
+      // Restore attachments without re-uploading; their Files API URIs are still valid.
+      restoreAttachments([...recoveryAttachments]);
       // Clear recovery data
       setRecoveryText(null);
       setRecoveryAttachments([]);
@@ -144,6 +173,7 @@ export default function ChatView() {
     const value = input?.value?.trim();
     if (!value && pendingAttachments.length === 0) return;
     if (isStreaming()) return;
+    if (hasPendingUploads()) return; // wait for file uploads to finish
 
     const editId = editingMessageId();
     const text = value || "";
@@ -196,6 +226,7 @@ export default function ChatView() {
     let count = 0;
     if (searchEnabled()) count++;
     if (urlContextEnabled()) count++;
+    if (codeExecutionEnabled()) count++;
     return count;
   };
 
@@ -221,18 +252,18 @@ export default function ChatView() {
       return lvl.charAt(0).toUpperCase() + lvl.slice(1);
     }
     if (!thinkingEnabled()) return "Off";
-    if (isGemini3Model(selectedModel())) {
+    if (usesLevelBasedThinking(selectedModel())) {
       const lvl = thinkingLevel();
       return lvl.charAt(0).toUpperCase() + lvl.slice(1);
     }
-    return `${thinkingBudget()}`;
+    return "";
   };
 
   const currentModelName = () => {
     return AVAILABLE_MODELS.find((m) => m.id === selectedModel())?.name ?? selectedModel();
   };
 
-  // --- Edit Mode Helpers ---
+  // === Edit Mode Helpers ===
 
   const startEdit = (msg: Message) => {
     const text = msg.parts
@@ -261,7 +292,7 @@ export default function ChatView() {
     }
   };
 
-  // --- File type mapping ---
+  // === File Type Mapping ===
 
   const getFileTypeInfo = (mimeType: string): { icon: string; label: string } => {
     if (mimeType.startsWith("image/")) return { icon: "image", label: mimeType.split("/")[1]?.toUpperCase() || "IMG" };
@@ -272,7 +303,7 @@ export default function ChatView() {
     return { icon: "attach_file", label: "File" };
   };
 
-  // --- Part Renderers ---
+  // === Part Renderers ===
 
   const renderPart = (part: MessagePart, isUser: boolean) => {
     switch (part.type) {
@@ -302,6 +333,16 @@ export default function ChatView() {
                 class="message-image"
                 loading="lazy"
               />
+              <div class="image-overlay-actions">
+                <button
+                  class="image-download-btn"
+                  type="button"
+                  aria-label="Download image"
+                  onClick={() => downloadInlineImage(part.mimeType, part.data, part.label)}
+                >
+                  <md-icon>download</md-icon>
+                </button>
+              </div>
             </div>
           );
         }
@@ -309,6 +350,17 @@ export default function ChatView() {
           <div class="message-file-chip">
             <md-icon>description</md-icon>
             <span class="md-typescale-label-medium">{part.label || "File"}</span>
+          </div>
+        );
+
+      case "fileData":
+        // User fileData is rendered in the attachment row by renderMessage
+        if (isUser) return null;
+        // Model-generated fileData is rare but handled.
+        return (
+          <div class="message-file-chip">
+            <md-icon>description</md-icon>
+            <span class="md-typescale-label-medium">{part.fileName || "File"}</span>
           </div>
         );
 
@@ -349,6 +401,36 @@ export default function ChatView() {
       case "functionResponse":
         return null;
 
+      case "executableCode":
+        return (
+          <div class="exec-code-block">
+            <div class="exec-code-header md-typescale-label-small">
+              <md-icon>terminal</md-icon>
+              <span>{part.language || "Code"}</span>
+            </div>
+            <pre class="exec-code-pre"><code>{part.code}</code></pre>
+          </div>
+        );
+
+      case "codeExecutionResult":
+        return (
+          <div class={`code-exec-result ${part.outcome === "OUTCOME_OK" ? "result-ok" : "result-error"}`}>
+            <div class="code-exec-result-header md-typescale-label-small">
+              <md-icon>{part.outcome === "OUTCOME_OK" ? "check_circle" : "error_outline"}</md-icon>
+              <span>
+                {part.outcome === "OUTCOME_OK"
+                  ? "Output"
+                  : part.outcome === "OUTCOME_DEADLINE_EXCEEDED"
+                  ? "Timed Out"
+                  : "Error"}
+              </span>
+            </div>
+            <Show when={part.output}>
+              <pre class="code-exec-output">{part.output}</pre>
+            </Show>
+          </div>
+        );
+
       default:
         return null;
     }
@@ -367,18 +449,145 @@ export default function ChatView() {
     return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   };
 
+  // === Snackbar ===
+
+  const [snackbarMessage, setSnackbarMessage] = createSignal<string | null>(null);
+  const [snackbarExiting, setSnackbarExiting] = createSignal(false);
+  let snackbarDismissTimer: ReturnType<typeof setTimeout> | undefined;
+  let snackbarRemoveTimer: ReturnType<typeof setTimeout> | undefined;
+
+  onCleanup(() => {
+    clearTimeout(snackbarDismissTimer);
+    clearTimeout(snackbarRemoveTimer);
+  });
+
+  const showSnackbar = (message: string): void => {
+    clearTimeout(snackbarDismissTimer);
+    clearTimeout(snackbarRemoveTimer);
+    setSnackbarExiting(false);
+    setSnackbarMessage(message);
+    // Auto-dismiss after 4s; remove from DOM after exit animation.
+    snackbarDismissTimer = setTimeout(() => {
+      setSnackbarExiting(true);
+      snackbarRemoveTimer = setTimeout(() => {
+        setSnackbarMessage(null);
+        setSnackbarExiting(false);
+      }, 200);
+    }, 4000);
+  };
+
+  // Save a base64 inline image to Downloads.
+  //
+  // Android: uses MediaStore (tauri-plugin-android-fs) because scoped storage
+  // (API 29+) blocks direct writes. API 24-28 needs WRITE_EXTERNAL_STORAGE,
+  // requested by the plugin.
+  // Desktop: uses plugin-fs with BaseDirectory.Download.
+  // Browser: falls back to anchor[download].
+  //
+  // Outcomes are reported via snackbar; errors are not re-thrown because callers
+  // are fire-and-forget.
+  const downloadInlineImage = async (mimeType: string, base64Data: string, label?: string): Promise<void> => {
+    const ext = mimeType.split("/")[1]?.replace("jpeg", "jpg") ?? "png";
+    const uid = crypto.randomUUID();
+    const filename = label ? `${label}.${ext}` : `lumi-ai-image-${uid}.${ext}`;
+    const bytes = Uint8Array.from(atob(base64Data), (c) => c.charCodeAt(0));
+
+    if (isTauri() && isAndroid()) {
+      const {
+        AndroidFs,
+        AndroidPublicGeneralPurposeDir,
+        getAndroidApiLevel,
+      } = await import("tauri-plugin-android-fs-api");
+
+      // Request legacy storage permission on Android 7-9. No-op on API 29+.
+      const apiLevel = await getAndroidApiLevel();
+      if (apiLevel < 29) {
+        const alreadyGranted = await AndroidFs.checkPublicFilesPermission();
+        if (!alreadyGranted) {
+          const granted = await AndroidFs.requestPublicFilesPermission();
+          if (!granted) {
+            showSnackbar("Storage permission denied");
+            return;
+          }
+        }
+      }
+
+      // Write as pending so other apps don't see the partial file, then scan
+      // into MediaStore.
+      let uri: AndroidFsUri | undefined;
+      try {
+        uri = await AndroidFs.createNewPublicFile(
+          AndroidPublicGeneralPurposeDir.Download,
+          filename,
+          mimeType,
+          { isPending: true },
+        );
+        await AndroidFs.writeFile(uri, bytes);
+        await AndroidFs.setPublicFilePending(uri, false);
+        await AndroidFs.scanPublicFile(uri);
+      } catch (err) {
+        // Remove the pending file on error.
+        if (uri != null) {
+          await AndroidFs.removeFile(uri).catch(() => {});
+        }
+        showSnackbar(`Could not save ${filename}`);
+        return;
+      }
+      showSnackbar(`${filename} saved to Downloads`);
+      return;
+    }
+
+    if (isTauri()) {
+      try {
+        const { writeFile, BaseDirectory } = await import("@tauri-apps/plugin-fs");
+        await writeFile(filename, bytes, { baseDir: BaseDirectory.Download });
+        showSnackbar(`${filename} saved to Downloads`);
+        return;
+      } catch (err) {
+        // Fall back to browser download on desktop.
+        console.error("Tauri fs write failed:", err);
+      }
+    }
+
+    const blob = new Blob([bytes], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.style.display = "none";
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+    showSnackbar(`${filename} downloaded`);
+  };
+
+  // Resubmit the message unchanged. Creates a new branch like edit+submit.
+  // Passing undefined preserves existing non-text parts.
+  const regenerateUserMessage = (msg: Message): void => {
+    if (isStreaming()) return;
+    const text = msg.parts
+      .filter((p) => p.type === "text")
+      .map((p) => (p as { type: "text"; text: string }).text)
+      .join("\n");
+    editMessage(msg.id, text, undefined);
+  };
+
   const renderMessage = (msg: Message) => {
     const isUser = msg.role === "user";
     const isLast = () => messages[messages.length - 1]?.id === msg.id;
 
-    // Branch info — on user messages that have been edited
+    // Branch info: on user messages that have been edited
     const branch = () => msg.branchGroupId ? branchState[msg.branchGroupId] : undefined;
 
-    // For user messages, separate attachments (inlineData) from text parts
+    // For user messages, separate file attachments (inlineData/fileData) from text parts
     const userAttachParts = () =>
-      isUser ? msg.parts.filter((p) => p.type === "inlineData") as { type: "inlineData"; mimeType: string; data: string; label?: string }[] : [];
+      isUser ? msg.parts.filter((p) => p.type === "inlineData" || p.type === "fileData") as (
+        | { type: "inlineData"; mimeType: string; data: string; label?: string }
+        | { type: "fileData"; mimeType: string; fileUri: string; expiresAt: number; apiKeyHint: string; fileName: string; preview?: string }
+      )[] : [];
     const userTextParts = () =>
-      isUser ? msg.parts.filter((p) => p.type !== "inlineData") : [];
+      isUser ? msg.parts.filter((p) => p.type !== "inlineData" && p.type !== "fileData") : [];
 
     return (
       <div class={`message ${isUser ? "message-user" : "message-model"}`}>
@@ -395,10 +604,15 @@ export default function ChatView() {
                 {(part) => {
                   const isImage = part.mimeType.startsWith("image/");
                   const info = getFileTypeInfo(part.mimeType);
+                  // fileData parts use the stored preview thumbnail; inlineData parts have the full base64
+                  const imgSrc = part.type === "fileData"
+                    ? part.preview
+                    : `data:${part.mimeType};base64,${part.data}`;
+                  const name = part.type === "fileData" ? part.fileName : (part.label || info.label);
                   return (
                     <div class="user-attach-item">
                       <Show
-                        when={isImage}
+                        when={isImage && imgSrc}
                         fallback={
                           <div class="user-attach-file-icon">
                             <md-icon>{info.icon}</md-icon>
@@ -407,12 +621,12 @@ export default function ChatView() {
                       >
                         <img
                           class="user-attach-img"
-                          src={`data:${part.mimeType};base64,${part.data}`}
-                          alt={part.label || "Image"}
+                          src={imgSrc}
+                          alt={name}
                           loading="lazy"
                         />
                       </Show>
-                      <span class="user-attach-name md-typescale-label-small">{part.label || info.label}</span>
+                      <span class="user-attach-name md-typescale-label-small">{name}</span>
                     </div>
                   );
                 }}
@@ -470,12 +684,17 @@ export default function ChatView() {
                 <md-icon>edit</md-icon>
               </md-icon-button>
             </Show>
+            <Show when={isUser && !isStreaming()}>
+              <md-icon-button class="action-btn" type="button" aria-label="Regenerate" onClick={() => regenerateUserMessage(msg)}>
+                <md-icon>replay</md-icon>
+              </md-icon-button>
+            </Show>
             <Show when={!isUser && isLast() && !isStreaming()}>
               <md-icon-button class="action-btn" type="button" onClick={() => retryMessage()}>
                 <md-icon>refresh</md-icon>
               </md-icon-button>
             </Show>
-            {/* Branch to new chat — only on model (response) messages */}
+            {/* Branch to new chat: only on model (response) messages */}
             <Show when={!isUser && !isStreaming()}>
               <md-icon-button class="action-btn" type="button" onClick={() => branchToNewChat(msg.id)}>
                 <md-icon>call_split</md-icon>
@@ -487,21 +706,14 @@ export default function ChatView() {
     );
   };
 
-  // --- Welcome Screen ---
+  // === Welcome Screen ===
 
   const WelcomeScreen = () => {
-    const userName = () => {
-      const email = account()?.email;
-      if (!email) return "";
-      const name = email.split("@")[0];
-      return name.charAt(0).toUpperCase() + name.slice(1);
-    };
-
     return (
       <div class="welcome-screen">
         <div class="welcome-content">
           <h1 class="welcome-greeting">
-            {greeting}{userName() ? `, ${userName()}` : ""}
+            {greeting}
           </h1>
           <p class="welcome-subtitle">{subtitle}</p>
           {/* Suggestion chips inside welcome on mobile */}
@@ -520,7 +732,7 @@ export default function ChatView() {
     );
   };
 
-  // --- Suggestion Chips Row (below input on welcome — desktop only) ---
+  // === Suggestion Chips Row ===
 
   const SuggestionRow = () => (
     <div class="suggestion-row">
@@ -535,7 +747,7 @@ export default function ChatView() {
     </div>
   );
 
-  // --- Input Area (shared between welcome and conversation) ---
+  // === Input Area ===
 
   const InputArea = () => (
     <div class="chat-input-area">
@@ -544,24 +756,43 @@ export default function ChatView() {
         <div class="attachment-strip">
           <For each={pendingAttachments}>
             {(att) => (
-              <div class="attachment-preview">
+              <div class={`attachment-preview${att.uploading ? " uploading" : att.uploadError ? " upload-error" : ""}`}>
                 <Show
-                  when={att.preview}
+                  when={!att.uploading && att.preview}
                   fallback={
                     <div class="attachment-file-icon">
-                      <md-icon>description</md-icon>
+                      <Show
+                        when={att.uploading}
+                        fallback={<md-icon>{att.uploadError ? "error" : "description"}</md-icon>}
+                      >
+                        <div class="attachment-spinner" />
+                      </Show>
                     </div>
                   }
                 >
                   <img src={att.preview} alt={att.file.name} class="attachment-thumb" />
                 </Show>
                 <span class="attachment-name md-typescale-label-small">{att.file.name}</span>
+                <Show when={att.uploadError}>
+                  <span class="attachment-error-label md-typescale-label-small">{att.uploadError}</span>
+                </Show>
                 <button class="attachment-remove" onClick={() => removeAttachment(att.id)}>
                   <md-icon>close</md-icon>
                 </button>
               </div>
             )}
           </For>
+        </div>
+      </Show>
+
+      {/* Upload error banner (shown when upload auto-fails and attachment is removed) */}
+      <Show when={fileUploadError()}>
+        <div class="upload-error-banner">
+          <md-icon class="upload-error-icon">error_outline</md-icon>
+          <span class="md-typescale-label-medium">{fileUploadError()}</span>
+          <button type="button" class="icon-btn icon-btn-sm upload-error-dismiss" onClick={() => setFileUploadError(null)}>
+            <md-icon>close</md-icon>
+          </button>
         </div>
       </Show>
 
@@ -641,18 +872,35 @@ export default function ChatView() {
                     <span class="toggle-thumb" />
                   </span>
                 </label>
-                <label class="tool-toggle">
-                  <md-icon>link</md-icon>
-                  <span>URL Context</span>
-                  <input
-                    type="checkbox"
-                    checked={urlContextEnabled()}
-                    onChange={(e) => setUrlContextEnabled(e.currentTarget.checked)}
-                  />
-                  <span class={`toggle-track ${urlContextEnabled() ? "on" : ""}`}>
-                    <span class="toggle-thumb" />
-                  </span>
-                </label>
+                {/* URL Context is not supported by all models (e.g. Gemma 4). */}
+                <Show when={modelSupportsUrlContext(selectedModel())}>
+                  <label class="tool-toggle">
+                    <md-icon>link</md-icon>
+                    <span>URL Context</span>
+                    <input
+                      type="checkbox"
+                      checked={urlContextEnabled()}
+                      onChange={(e) => setUrlContextEnabled(e.currentTarget.checked)}
+                    />
+                    <span class={`toggle-track ${urlContextEnabled() ? "on" : ""}`}>
+                      <span class="toggle-thumb" />
+                    </span>
+                  </label>
+                </Show>
+                <Show when={modelSupportsCodeExecution(selectedModel())}>
+                  <label class="tool-toggle">
+                    <md-icon>code</md-icon>
+                    <span>Code Execution</span>
+                    <input
+                      type="checkbox"
+                      checked={codeExecutionEnabled()}
+                      onChange={(e) => setCodeExecutionEnabled(e.currentTarget.checked)}
+                    />
+                    <span class={`toggle-track ${codeExecutionEnabled() ? "on" : ""}`}>
+                      <span class="toggle-thumb" />
+                    </span>
+                  </label>
+                </Show>
               </div>
               <div class="popup-backdrop" onClick={() => setToolsMenuOpen(false)} />
             </Show>
@@ -794,8 +1042,8 @@ export default function ChatView() {
                     </label>
                   </Show>
 
-                  {/* Gemini 3: level selector (always visible for alwaysThinking, conditional for others) */}
-                  <Show when={isGemini3Model(selectedModel()) && (modelAlwaysThinking(selectedModel()) || thinkingEnabled())}>
+                  {/* Level selector (always visible for alwaysThinking, conditional for others) */}
+                  <Show when={usesLevelBasedThinking(selectedModel()) && (modelAlwaysThinking(selectedModel()) || thinkingEnabled())}>
                     <div class="thinking-levels">
                       <div class="md-typescale-label-small thinking-levels-label">Thinking Level</div>
                       <div class="thinking-level-options">
@@ -810,29 +1058,6 @@ export default function ChatView() {
                             </button>
                           )}
                         </For>
-                      </div>
-                    </div>
-                  </Show>
-
-                  {/* Gemini 2.5: budget slider */}
-                  <Show when={!isGemini3Model(selectedModel()) && thinkingEnabled()}>
-                    <div class="thinking-budget">
-                      <div class="thinking-budget-header">
-                        <span class="md-typescale-label-small">Budget</span>
-                        <span class="md-typescale-label-small thinking-budget-value">{thinkingBudget()}</span>
-                      </div>
-                      <input
-                        type="range"
-                        class="thinking-budget-slider"
-                        min={1024}
-                        max={32768}
-                        step={1024}
-                        value={thinkingBudget()}
-                        onInput={(e) => setThinkingBudget(parseInt(e.currentTarget.value))}
-                      />
-                      <div class="thinking-budget-labels">
-                        <span class="md-typescale-label-small">1K</span>
-                        <span class="md-typescale-label-small">32K</span>
                       </div>
                     </div>
                   </Show>
@@ -865,6 +1090,7 @@ export default function ChatView() {
                       onClick={() => {
                         setSelectedModel(model.id);
                         clampThinkingLevelForModel(model.id);
+                        clampUrlContextForModel(model.id);
                         setModelMenuOpen(false);
                       }}
                     >
@@ -886,7 +1112,7 @@ export default function ChatView() {
           <md-filled-tonal-icon-button
             type="button"
             aria-label={isViewingActiveStream() ? "Stop generating" : "Send message"}
-            disabled={isStreaming() && !isViewingActiveStream()}
+            disabled={(isStreaming() && !isViewingActiveStream()) || hasPendingUploads()}
             class={`send-button ${isViewingActiveStream() ? "is-stop" : ""}`}
             onClick={() => isViewingActiveStream() ? stopStreaming() : doSubmit()}
           >
@@ -926,10 +1152,10 @@ export default function ChatView() {
           </div>
         }
       >
-        <div class="chat-messages">
+        <div class="chat-messages" ref={chatMessagesRef}>
           <For each={messages}>{(msg) => renderMessage(msg)}</For>
 
-          {/* Streaming response — only shown when viewing the branch that's streaming */}
+          {/* Streaming response: only shown when viewing the branch that's streaming */}
           <Show when={isViewingActiveStream()}>
             <div class="message message-model">
               <div class="message-avatar">
@@ -945,11 +1171,55 @@ export default function ChatView() {
                     <div class="thinking-content md-typescale-body-small message-text" innerHTML={renderMarkdown(streamingThinking())} />
                   </details>
                 </Show>
+                <Show when={streamingCodeBlocks.length > 0}>
+                  <For each={streamingCodeBlocks}>
+                    {(block) => (
+                      <div class="exec-code-block">
+                        <div class="exec-code-header md-typescale-label-small">
+                          <md-icon>terminal</md-icon>
+                          <span>{block.language || "Code"}</span>
+                        </div>
+                        <pre class="exec-code-pre"><code>{block.code}</code></pre>
+                      </div>
+                    )}
+                  </For>
+                </Show>
+                <Show when={streamingCodeResults.length > 0}>
+                  <For each={streamingCodeResults}>
+                    {(result) => (
+                      <div class={`code-exec-result ${result.outcome === "OUTCOME_OK" ? "result-ok" : "result-error"}`}>
+                        <div class="code-exec-result-header md-typescale-label-small">
+                          <md-icon>{result.outcome === "OUTCOME_OK" ? "check_circle" : "error_outline"}</md-icon>
+                          <span>
+                            {result.outcome === "OUTCOME_OK"
+                              ? "Output"
+                              : result.outcome === "OUTCOME_DEADLINE_EXCEEDED"
+                              ? "Timed Out"
+                              : "Error"}
+                          </span>
+                        </div>
+                        <Show when={result.output}>
+                          <pre class="code-exec-output">{result.output}</pre>
+                        </Show>
+                      </div>
+                    )}
+                  </For>
+                </Show>
                 <Show when={streamingImages.length > 0}>
                   <For each={streamingImages}>
                     {(img) => (
                       <div class="message-image-container">
                         <img src={`data:${img.mimeType};base64,${img.data}`} alt="Generated" class="message-image" />
+                        <div class="image-overlay-actions">
+                          <button
+                            class="image-download-btn"
+                            type="button"
+                            aria-label="Download image"
+                            onClick={() => downloadInlineImage(img.mimeType, img.data)}
+                          >
+                            <md-icon>download</md-icon>
+                          </button>
+                        </div>
                       </div>
                     )}
                   </For>
@@ -957,7 +1227,7 @@ export default function ChatView() {
                 <Show when={streamingText()}>
                   <div class="message-text" innerHTML={renderMarkdown(streamingText())} />
                 </Show>
-                <Show when={!streamingText() && !streamingThinking()}>
+                <Show when={!streamingText() && !streamingThinking() && streamingCodeBlocks.length === 0 && streamingCodeResults.length === 0 && streamingImages.length === 0}>
                   <div class="typing-indicator">
                     <span></span><span></span><span></span>
                   </div>
@@ -972,11 +1242,18 @@ export default function ChatView() {
               {chatError()}
             </div>
           </Show>
-
-          <div ref={messagesEndRef}></div>
         </div>
 
         <InputArea />
+      </Show>
+
+      <Show when={snackbarMessage() !== null}>
+        <div
+          class={`snackbar${snackbarExiting() ? " snackbar--exiting" : ""}`}
+          role="status"
+        >
+          <span class="snackbar-text md-typescale-body-medium">{snackbarMessage()}</span>
+        </div>
       </Show>
     </div>
   );

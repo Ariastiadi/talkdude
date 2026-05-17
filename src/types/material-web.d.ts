@@ -6,6 +6,7 @@ declare module "solid-js" {
       "md-icon": any;
       "md-elevation": any;
       "md-filled-button": any;
+      "md-text-button": any;
       "md-icon-button": any;
       "md-filled-tonal-icon-button": any;
       "md-divider": any;

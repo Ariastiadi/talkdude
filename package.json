@@ -1,6 +1,6 @@
 {
   "name": "lumi-ai",
-  "version": "3.2.0",
+  "version": "3.5.0",
   "description": "",
   "type": "module",
   "scripts": {
@@ -12,26 +12,29 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@material/material-color-utilities": "^0.4.0",
-    "@material/web": "^2.4.1",
-    "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-http": "^2.5.7",
-    "@tauri-apps/plugin-opener": "^2",
-    "@types/katex": "^0.16.8",
-    "@types/markdown-it": "^14.1.2",
-    "dexie": "^4.3.0",
-    "highlight.js": "^11.11.1",
-    "katex": "^0.16.28",
-    "markdown-it": "^14.1.0",
-    "markdown-it-mark": "^4.0.0",
-    "markdown-it-sub": "^2.0.0",
-    "markdown-it-sup": "^2.0.0",
-    "solid-js": "^1.9.3"
+    "@google/genai": "2.0.0",
+    "@material/material-color-utilities": "0.4.0",
+    "@material/web": "2.4.1",
+    "@tauri-apps/api": "2.10.1",
+    "@tauri-apps/plugin-fs": "2.5.1",
+    "@tauri-apps/plugin-http": "2.5.7",
+    "@tauri-apps/plugin-opener": "2.5.3",
+    "@types/katex": "0.16.8",
+    "@types/markdown-it": "14.1.2",
+    "dexie": "4.3.0",
+    "highlight.js": "11.11.1",
+    "katex": "0.16.28",
+    "markdown-it": "14.1.1",
+    "markdown-it-mark": "4.0.0",
+    "markdown-it-sub": "2.0.0",
+    "markdown-it-sup": "2.0.0",
+    "solid-js": "1.9.11",
+    "tauri-plugin-android-fs-api": "28.1.0"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2",
-    "typescript": "~5.6.2",
-    "vite": "^6.0.3",
-    "vite-plugin-solid": "^2.11.0"
+    "@tauri-apps/cli": "2.10.0",
+    "typescript": "5.6.3",
+    "vite": "6.4.1",
+    "vite-plugin-solid": "2.11.10"
   }
 }

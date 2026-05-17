@@ -1,75 +1,94 @@
 import { createSignal } from "solid-js";
-import type { AuthAccount } from "../db";
-import { getAccount, loginWithGoogle, logout as logoutOAuth, resumeMobileOAuth } from "../auth/oauth";
+import { getApiKey, setApiKey, clearApiKey, validateApiKey } from "../auth/apikey";
 
-const [account, setAccount] = createSignal<AuthAccount | null>(null);
-const [authLoading, setAuthLoading] = createSignal(false);
-const [authError, setAuthError] = createSignal<string | null>(null);
+// === State ===
 
-export { account, authLoading, authError };
+const [apiKey, setApiKeySignal] = createSignal<string | null>(null);
+const [apiKeyLoading, setApiKeyLoading] = createSignal(false);
+const [apiKeyError, setApiKeyError] = createSignal<string | null>(null);
+const [apiKeyDialogOpen, setApiKeyDialogOpen] = createSignal(false);
+// Distinguishes first-run onboarding from Settings re-config.
+const [isOnboardingFlow, setIsOnboardingFlow] = createSignal(false);
+
+export { apiKey, apiKeyLoading, apiKeyError, apiKeyDialogOpen, isOnboardingFlow };
 
 /**
- * Initializes auth state by loading the persisted account from Dexie.
+ * Loads the stored API key from the database and auto-opens the key dialog
+ * if no key is found.
  */
 export async function initAuth(): Promise<void> {
   try {
-    // Complete any pending mobile OAuth flow (navigated away and back)
-    const resumed = await resumeMobileOAuth();
-    if (resumed) {
-      setAccount(resumed);
+    const key = await getApiKey();
+    setApiKeySignal(key);
+    if (!key) {
+      setIsOnboardingFlow(true);
+      setApiKeyDialogOpen(true);
+    }
+  } catch {
+    // DB read failed; treat as no key, dialog will open
+    setIsOnboardingFlow(true);
+    setApiKeyDialogOpen(true);
+  }
+}
+
+/**
+ * Opens the API key dialog (e.g. from the sidebar).
+ */
+export function openApiKeyDialog(): void {
+  setApiKeyError(null);
+  setIsOnboardingFlow(false);
+  setApiKeyDialogOpen(true);
+}
+
+/**
+ * Closes the API key dialog without saving (skip).
+ */
+export function closeApiKeyDialog(): void {
+  setApiKeyDialogOpen(false);
+  setApiKeyError(null);
+  setIsOnboardingFlow(false);
+}
+
+/**
+ * Validates and saves a new API key.
+ * Updates the in-memory signal and closes the dialog on success.
+ */
+export async function submitApiKey(key: string): Promise<void> {
+  const trimmed = key.trim();
+  setApiKeyError(null);
+
+  if (!trimmed) {
+    setApiKeyError("Please enter an API key.");
+    return;
+  }
+
+  setApiKeyLoading(true);
+  try {
+    const validationError = await validateApiKey(trimmed);
+    if (validationError) {
+      setApiKeyError(validationError);
       return;
     }
-
-    const stored = await getAccount();
-    setAccount(stored);
+    await setApiKey(trimmed);
+    setApiKeySignal(trimmed);
+    setIsOnboardingFlow(false);
+    setApiKeyDialogOpen(false);
   } catch (err) {
-    // Auth load failed — account will remain null
-  }
-
-  // Handle bfcache restoration on mobile.  When history.go() restores the
-  // page from the session cache after OAuth, the JS context is unfrozen but
-  // initAuth() won't re-run.  The pageshow event fires in this case, so we
-  // complete the pending OAuth flow and reset the loading spinner here.
-  if (typeof window !== "undefined") {
-    window.addEventListener("pageshow", async (event: PageTransitionEvent) => {
-      if (!event.persisted) return;
-      try {
-        const resumed = await resumeMobileOAuth();
-        if (resumed) {
-          setAccount(resumed);
-        }
-      } catch {
-        // Resume failed — user can retry manually
-      }
-      // Always clear the loading state that was left by the never-resolving
-      // loginWithGoogleImpl promise before the page navigated away.
-      setAuthLoading(false);
-    });
-  }
-}
-
-/**
- * Starts the Google OAuth login flow.
- */
-export async function login(): Promise<void> {
-  setAuthLoading(true);
-  setAuthError(null);
-  try {
-    const acct = await loginWithGoogle();
-    setAccount(acct);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    setAuthError(msg);
-    throw err;
+    setApiKeyError(err instanceof Error ? err.message : String(err));
   } finally {
-    setAuthLoading(false);
+    setApiKeyLoading(false);
   }
 }
 
 /**
- * Logs out and clears auth state.
+ * Clears the stored API key and re-opens the key dialog.
  */
-export async function logout(): Promise<void> {
-  await logoutOAuth();
-  setAccount(null);
+export async function removeApiKey(): Promise<void> {
+  await clearApiKey();
+  setApiKeySignal(null);
+  setApiKeyError(null);
+  // Keep overlay mode; user is already inside the app shell.
+  setIsOnboardingFlow(false);
+  setApiKeyDialogOpen(true);
 }
+

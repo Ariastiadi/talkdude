@@ -28,7 +28,7 @@
   flex-shrink: 0;
 }
 
-/* --- Search --- */
+/* === Search === */
 
 .sidebar-search {
   display: flex;
@@ -67,7 +67,7 @@
   --md-icon-button-state-layer-width: 28px;
 }
 
-/* --- Section Label --- */
+/* === Section Label === */
 
 .sidebar-section-label {
   padding: 8px 20px 4px;
@@ -76,7 +76,7 @@
   letter-spacing: 0.5px;
 }
 
-/* --- Conversations --- */
+/* === Conversations === */
 
 .sidebar-conversations {
   flex: 1;
@@ -139,7 +139,7 @@
   font-size: 14px;
 }
 
-/* --- Conversation Menu Button --- */
+/* === Conversation Menu Button === */
 
 .conv-menu-btn {
   opacity: 0;
@@ -158,7 +158,7 @@
   .conv-menu-btn { opacity: 1; }
 }
 
-/* --- Conversation Spinner (background streaming) --- */
+/* === Conversation Spinner (background streaming) === */
 
 .conv-spinner {
   width: 18px;
@@ -174,7 +174,7 @@
   to { transform: rotate(360deg); }
 }
 
-/* --- Rename Input --- */
+/* === Rename Input === */
 
 .conv-rename-input {
   flex: 1;
@@ -189,7 +189,7 @@
   border-bottom: 1px solid var(--md-sys-color-primary);
 }
 
-/* --- Context Menu --- */
+/* === Context Menu === */
 
 .conv-context-menu {
   position: absolute;
@@ -248,7 +248,7 @@
   z-index: 199;
 }
 
-/* --- Archived Toggle --- */
+/* === Archived Toggle === */
 
 .archived-toggle {
   display: flex;
@@ -279,7 +279,7 @@
   margin-left: auto;
 }
 
-/* --- Confirmation Dialog (Portal — rendered at body level) --- */
+/* === Confirmation Dialog (Portal, rendered at body level) === */
 
 .confirm-dialog-backdrop {
   position: fixed;
@@ -379,7 +379,7 @@
   background: color-mix(in srgb, var(--md-sys-color-primary) 85%, black);
 }
 
-/* --- Selection Mode --- */
+/* === Selection Mode === */
 
 .select-toolbar {
   gap: 0;
@@ -410,7 +410,7 @@
   color: var(--md-sys-color-primary);
 }
 
-/* --- Footer --- */
+/* === Footer === */
 
 .sidebar-footer {
   padding: 0 0 8px;
@@ -479,7 +479,7 @@
   text-overflow: ellipsis;
 }
 
-/* --- About Dialog --- */
+/* === About Dialog === */
 
 .about-dialog {
   text-align: center;
@@ -518,7 +518,7 @@
   justify-content: center;
 }
 
-/* --- Responsive --- */
+/* === Responsive === */
 
 @media (max-width: 599px) {
   .confirm-dialog {

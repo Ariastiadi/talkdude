@@ -1,17 +1,6 @@
 import Dexie, { type EntityTable } from "dexie";
 
-// --- Schema Definitions ---
-
-export interface AuthAccount {
-  id: string;
-  email: string;
-  refreshToken: string;
-  accessToken: string;
-  tokenExpiry: number;
-  projectId: string;
-  createdAt: number;
-  updatedAt: number;
-}
+// === Schema Definitions ===
 
 export interface Conversation {
   id: string;
@@ -24,8 +13,8 @@ export interface Conversation {
   searchEnabled?: boolean;
   urlContextEnabled?: boolean;
   thinkingEnabled?: boolean;
-  thinkingBudget?: number;
   thinkingLevel?: string;
+  codeExecutionEnabled?: boolean;
 }
 
 export interface Message {
@@ -50,9 +39,23 @@ export type MessagePart =
   | { type: "text"; text: string }
   | { type: "thinking"; text: string; thoughtSignature?: string }
   | { type: "inlineData"; mimeType: string; data: string; label?: string }
+  | {
+      type: "fileData";
+      mimeType: string;
+      fileUri: string;
+      /** Unix timestamp (ms) when the Files API file expires. */
+      expiresAt: number;
+      /** Non-secret key identifier used to detect API key changes after upload. */
+      apiKeyHint: string;
+      fileName: string;
+      /** Data URL thumbnail (images only, kept for UI display). */
+      preview?: string;
+    }
   | { type: "functionCall"; name: string; args: Record<string, unknown>; id?: string }
   | { type: "functionResponse"; name: string; id?: string; response: unknown }
-  | { type: "searchGrounding"; queries: string[]; sources: { uri: string; title: string }[] };
+  | { type: "searchGrounding"; queries: string[]; sources: { uri: string; title: string }[] }
+  | { type: "executableCode"; language: string; code: string }
+  | { type: "codeExecutionResult"; outcome: string; output: string };
 
 export interface AppSettings {
   key: string;
@@ -76,10 +79,9 @@ export interface ThoughtSignatureEntry {
   createdAt: number;
 }
 
-// --- Database ---
+// === Database ===
 
 class LumiDB extends Dexie {
-  auth!: EntityTable<AuthAccount, "id">;
   conversations!: EntityTable<Conversation, "id">;
   messages!: EntityTable<Message, "id">;
   settings!: EntityTable<AppSettings, "key">;
@@ -122,6 +124,44 @@ class LumiDB extends Dexie {
       thoughtSignatures: "id, conversationId, model",
       messageBranches: "id, conversationId, branchGroupId",
       customInstructions: "id",
+    });
+
+    // v5: drop auth table (key moved to settings). Clean up stale v3.2 data:
+    // - conversations.thinkingBudget: removed field.
+    // - messages: strip user-uploaded inlineData (v3.5 uses Files API). Model
+    //   messages keep inlineData for generated images.
+    // - messageBranches.snapshot: strip inlineData so branch nav cannot re-introduce it.
+    this.version(5).stores({
+      auth: null, // drop table
+      conversations: "id, updatedAt",
+      messages: "id, conversationId, createdAt, branchGroupId",
+      settings: "key",
+      thoughtSignatures: "id, conversationId, model",
+      messageBranches: "id, conversationId, branchGroupId",
+      customInstructions: "id",
+    }).upgrade(async (tx) => {
+      await tx.table("conversations").toCollection().modify((conv) => {
+        if (!("thinkingBudget" in conv)) return false;
+        delete conv.thinkingBudget;
+      });
+
+      await tx.table("messages").toCollection().modify((msg) => {
+        if (msg.role !== "user") return false;
+        if (!msg.parts.some((p: { type: string }) => p.type === "inlineData")) return false;
+        msg.parts = msg.parts.filter((p: { type: string }) => p.type !== "inlineData");
+      });
+
+      await tx.table("messageBranches").toCollection().modify((branch) => {
+        const hasLegacyUserData = branch.snapshot.some(
+          (msg: { role: string; parts: { type: string }[] }) =>
+            msg.role === "user" && msg.parts.some((p) => p.type === "inlineData"),
+        );
+        if (!hasLegacyUserData) return false;
+        branch.snapshot = branch.snapshot.map((msg: { role: string; parts: { type: string }[] }) => {
+          if (msg.role !== "user") return msg;
+          return { ...msg, parts: msg.parts.filter((p) => p.type !== "inlineData") };
+        });
+      });
     });
   }
 }

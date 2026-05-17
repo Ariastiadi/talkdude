@@ -1,17 +1,33 @@
 import { Show, createSignal } from "solid-js";
 import { Portal } from "solid-js/web";
-import { login, authLoading, authError } from "../lib/stores/auth";
+import {
+  apiKey,
+  apiKeyLoading,
+  apiKeyError,
+  submitApiKey,
+  closeApiKeyDialog,
+  removeApiKey,
+} from "../lib/stores/auth";
+import { platformOpenUrl } from "../lib/platform";
 import "./LoginScreen.css";
 
-export default function LoginScreen() {
-  const [disclaimerOpen, setDisclaimerOpen] = createSignal(false);
+const AISTUDIO_KEY_URL = "https://aistudio.google.com/app/apikey";
 
-  const handleLogin = async () => {
-    try {
-      await login();
-    } catch {
-      // Error is set in the store
-    }
+export default function LoginScreen() {
+  const [inputValue, setInputValue] = createSignal(apiKey() ?? "");
+
+  const handleSubmit = async (e: Event) => {
+    e.preventDefault();
+    await submitApiKey(inputValue());
+  };
+
+  const handleSkip = () => {
+    closeApiKeyDialog();
+  };
+
+  const handleGetKey = (e: Event) => {
+    e.preventDefault();
+    platformOpenUrl(AISTUDIO_KEY_URL);
   };
 
   return (
@@ -23,81 +39,176 @@ export default function LoginScreen() {
         </div>
         <h1 class="md-typescale-display-small login-title">Lumi AI</h1>
         <p class="md-typescale-body-large login-subtitle">
-          A friendly, human-like AI chatbot powered by Gemini
+          Enter your Gemini API key to get started
         </p>
 
-        <Show when={authError()}>
+        <Show when={apiKeyError()}>
           <div class="login-error md-typescale-body-medium">
-            {authError()}
+            {apiKeyError()}
           </div>
         </Show>
 
-        <md-filled-button
-          onClick={handleLogin}
-          disabled={authLoading()}
-          class="login-button"
-        >
-          <Show when={!authLoading()} fallback={<md-circular-progress indeterminate style={{ "--md-circular-progress-size": "24px" }}></md-circular-progress>}>
-            <md-icon slot="icon">login</md-icon>
-            Sign in with Google
-          </Show>
-        </md-filled-button>
-
-        <p class="md-typescale-body-small login-disclaimer">
-          Authenticates via Google{" "}
-          <a href="https://antigravity.google" target="_blank" rel="noopener noreferrer" class="login-link">
-            Antigravity
-          </a>{" "}
-          OAuth
-        </p>
-        <p class="md-typescale-body-small login-disclaimer">
-          Please review the{" "}
-          <a class="login-link" onClick={() => setDisclaimerOpen(true)}>
-            disclaimer
-          </a>{" "}
-          before proceeding
-        </p>
-      </div>
-
-      <Show when={disclaimerOpen()}>
-        <Portal>
-          <div class="confirm-dialog-backdrop" onClick={() => setDisclaimerOpen(false)}>
-            <div class="confirm-dialog disclaimer-dialog" onClick={(e) => e.stopPropagation()}>
-              <h2 class="md-typescale-headline-small confirm-dialog-title">Disclaimer</h2>
-              <div class="disclaimer-dialog-body">
-                <div class="disclaimer-section">
-                  <h3 class="disclaimer-heading md-typescale-title-small">Assume All Risk</h3>
-                  <p class="md-typescale-body-medium">
-                    Use of this software may conflict with Google's Terms of Service. Accounts — particularly
-                    new or recently created ones — may face restrictions, suspension, or shadow-banning
-                    irrespective of subscription tier. We strongly recommend against using your primary Google
-                    account. Choose an account that does not hold critical data or services you depend on.
-                  </p>
-                </div>
-                <div class="disclaimer-section">
-                  <h3 class="disclaimer-heading md-typescale-title-small">Independent Project</h3>
-                  <p class="md-typescale-body-medium">
-                    This is an independent open-source project. It is not endorsed by, sponsored by,
-                    or affiliated with Google LLC in any capacity. "Antigravity", "Gemini",
-                    "Google Cloud", and "Google" are registered trademarks of Google LLC.
-                  </p>
-                </div>
-                <div class="disclaimer-section">
-                  <h3 class="disclaimer-heading md-typescale-title-small">No Warranty</h3>
-                  <p class="md-typescale-body-medium">
-                    This software is distributed on an "as is" basis without warranties of any kind,
-                    express or implied. You bear sole responsibility for ensuring your use complies
-                    with all applicable Terms of Service and Acceptable Use Policies.
-                  </p>
-                </div>
-              </div>
-              <div class="confirm-dialog-actions">
-                <button type="button" class="dialog-btn dialog-btn-cancel" onClick={() => setDisclaimerOpen(false)}>Understood</button>
-              </div>
-            </div>
+        <form class="api-key-form" onSubmit={handleSubmit}>
+          <div class="api-key-input-wrapper">
+            <input
+              type="password"
+              class="api-key-input md-typescale-body-large"
+              placeholder="AIza..."
+              value={inputValue()}
+              onInput={(e) => setInputValue(e.currentTarget.value)}
+              autocomplete="off"
+              spellcheck={false}
+              disabled={apiKeyLoading()}
+            />
           </div>
-        </Portal>
-      </Show>
+
+          <p class="md-typescale-body-small login-disclaimer api-key-hint">
+            Get your free API key from{" "}
+            <a href={AISTUDIO_KEY_URL} class="login-link" onClick={handleGetKey}>
+              Google AI Studio
+            </a>
+          </p>
+
+          <div class="api-key-actions">
+            <md-filled-button
+              type="submit"
+              disabled={apiKeyLoading() || !inputValue().trim()}
+              class="login-button"
+            >
+              <Show
+                when={!apiKeyLoading()}
+                fallback={
+                  <md-circular-progress
+                    indeterminate
+                    style={{ "--md-circular-progress-size": "24px" }}
+                  ></md-circular-progress>
+                }
+              >
+                <md-icon slot="icon">key</md-icon>
+                Save API Key
+              </Show>
+            </md-filled-button>
+
+            <button
+              type="button"
+              class="login-text-btn"
+              onClick={handleSkip}
+              disabled={apiKeyLoading()}
+            >
+              Skip for now
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
+  );
+}
+
+/**
+ * Dialog for reconfiguring the API key after initial setup.
+ * Rendered as a Portal overlay on top of the app shell, not a full-screen
+ * replacement. Uses independent CSS classes so it works regardless of which
+ * stylesheets are loaded.
+ */
+export function ApiKeyDialog() {
+  const [inputValue, setInputValue] = createSignal(apiKey() ?? "");
+
+  const handleSubmit = async (e: Event) => {
+    e.preventDefault();
+    await submitApiKey(inputValue());
+  };
+
+  const handleCancel = () => {
+    closeApiKeyDialog();
+  };
+
+  const handleRemoveKey = async () => {
+    setInputValue("");
+    await removeApiKey();
+  };
+
+  const handleGetKey = (e: Event) => {
+    e.preventDefault();
+    platformOpenUrl(AISTUDIO_KEY_URL);
+  };
+
+  return (
+    <Portal>
+      <div class="apikey-dialog-backdrop" onClick={handleCancel}>
+        <div class="apikey-dialog" onClick={(e) => e.stopPropagation()}>
+          <h2 class="md-typescale-headline-small apikey-dialog-title">API Key Settings</h2>
+          <p class="md-typescale-body-medium apikey-dialog-subtitle">
+            Update your Gemini API key
+          </p>
+
+          <Show when={apiKeyError()}>
+            <div class="login-error md-typescale-body-medium apikey-dialog-error">
+              {apiKeyError()}
+            </div>
+          </Show>
+
+          <form class="api-key-form" onSubmit={handleSubmit}>
+            <div class="api-key-input-wrapper">
+              <input
+                type="password"
+                class="api-key-input md-typescale-body-large"
+                placeholder="AIza..."
+                value={inputValue()}
+                onInput={(e) => setInputValue(e.currentTarget.value)}
+                autocomplete="off"
+                spellcheck={false}
+                disabled={apiKeyLoading()}
+              />
+            </div>
+
+            <p class="md-typescale-body-small login-disclaimer api-key-hint">
+              Get your free API key from{" "}
+              <a href={AISTUDIO_KEY_URL} class="login-link" onClick={handleGetKey}>
+                Google AI Studio
+              </a>
+            </p>
+
+            <div class="api-key-actions">
+              <md-filled-button
+                type="submit"
+                disabled={apiKeyLoading() || !inputValue().trim()}
+                class="login-button"
+              >
+                <Show
+                  when={!apiKeyLoading()}
+                  fallback={
+                    <md-circular-progress
+                      indeterminate
+                      style={{ "--md-circular-progress-size": "24px" }}
+                    ></md-circular-progress>
+                  }
+                >
+                  <md-icon slot="icon">key</md-icon>
+                  Save API Key
+                </Show>
+              </md-filled-button>
+
+              <button
+                type="button"
+                class="login-text-btn login-text-btn-primary apikey-dialog-cancel"
+                onClick={handleCancel}
+                disabled={apiKeyLoading()}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+
+          <button
+            type="button"
+            class="login-text-btn login-text-btn-danger apikey-dialog-remove"
+            onClick={handleRemoveKey}
+            disabled={apiKeyLoading()}
+          >
+            Remove API key
+          </button>
+        </div>
+      </div>
+    </Portal>
   );
 }

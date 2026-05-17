@@ -18,7 +18,7 @@
   position: relative;
 }
 
-/* --- Desktop (>=900px): sidebar pushes content, collapsible via width --- */
+/* === Desktop (>=900px): sidebar pushes content, collapsible via width === */
 
 .sidebar-container {
   flex-shrink: 0;
@@ -45,7 +45,7 @@
   display: none;
 }
 
-/* --- Tablet / Mobile (<900px): sidebar overlays as modal drawer --- */
+/* === Tablet / Mobile (<900px): sidebar overlays as modal drawer === */
 
 @media (max-width: 899px) {
   .sidebar-container {

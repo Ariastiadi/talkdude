@@ -1,7 +1,8 @@
-// --- Material Web Component Imports ---
+// === Material Web Component Imports ===
 // Import only the components we need to minimize bundle size.
 
 import "@material/web/button/filled-button.js";
+import "@material/web/button/text-button.js";
 import "@material/web/icon/icon.js";
 import "@material/web/iconbutton/icon-button.js";
 import "@material/web/iconbutton/filled-tonal-icon-button.js";

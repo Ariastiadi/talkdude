@@ -1,4 +1,4 @@
-/* --- Material Design 3 Expressive Markdown Prose Theme --- */
+/* === Material Design 3 Expressive Markdown Prose Theme === */
 
 .message-text {
   font-size: 14.5px;
@@ -39,7 +39,7 @@
   margin-top: 0;
 }
 
-/* --- Links --- */
+/* === Links === */
 
 .md-link {
   color: var(--md-sys-color-primary);
@@ -67,7 +67,7 @@
   background: color-mix(in srgb, var(--md-sys-color-on-primary-container) 12%, transparent);
 }
 
-/* --- Inline Code --- */
+/* === Inline Code === */
 
 .md-inline-code {
   background: var(--md-sys-color-surface-container-highest);
@@ -85,7 +85,7 @@
   color: inherit;
 }
 
-/* --- Code Block --- */
+/* === Code Block === */
 
 .md-code-block {
   margin: 12px 0;
@@ -145,7 +145,7 @@
   padding: 0;
 }
 
-/* --- Blockquotes --- */
+/* === Blockquotes === */
 
 .md-blockquote {
   margin: 12px 0;
@@ -166,7 +166,7 @@
   color: inherit;
 }
 
-/* --- Lists --- */
+/* === Lists === */
 
 .message-text ul,
 .message-text ol {
@@ -194,7 +194,7 @@
   margin: 4px 0;
 }
 
-/* --- Tables --- */
+/* === Tables === */
 
 .md-table-wrap {
   overflow-x: auto;
@@ -241,7 +241,7 @@
   background: color-mix(in srgb, var(--md-sys-color-primary) 4%, transparent);
 }
 
-/* --- Horizontal Rule --- */
+/* === Horizontal Rule === */
 
 .message-text hr {
   border: none;
@@ -250,7 +250,7 @@
   margin: 20px 0;
 }
 
-/* --- Images --- */
+/* === Images === */
 
 .message-text img {
   max-width: 100%;
@@ -258,7 +258,7 @@
   margin: 8px 0;
 }
 
-/* --- Strong & Emphasis --- */
+/* === Strong & Emphasis === */
 
 .message-text strong {
   font-weight: 600;
@@ -268,7 +268,7 @@
   font-style: italic;
 }
 
-/* --- Strikethrough --- */
+/* === Strikethrough === */
 
 .message-text s,
 .message-text del {
@@ -276,7 +276,7 @@
   opacity: 0.6;
 }
 
-/* --- Task Lists --- */
+/* === Task Lists === */
 
 .md-task-item {
   list-style: none;
@@ -297,7 +297,7 @@
   accent-color: var(--md-sys-color-on-primary-container);
 }
 
-/* --- Mark / Highlight --- */
+/* === Mark / Highlight === */
 
 .message-text mark {
   background: color-mix(in srgb, var(--md-sys-color-tertiary-container) 60%, transparent);
@@ -311,7 +311,7 @@
   color: inherit;
 }
 
-/* --- Subscript & Superscript --- */
+/* === Subscript & Superscript === */
 
 .message-text sub {
   font-size: 0.75em;
@@ -323,7 +323,7 @@
   vertical-align: super;
 }
 
-/* --- Math (KaTeX) --- */
+/* === Math (KaTeX) === */
 
 .message-text .katex {
   font-size: 1em;
@@ -350,9 +350,9 @@
   border-color: color-mix(in srgb, var(--md-sys-color-on-primary-container) 20%, transparent);
 }
 
-/* --- Highlight.js — MD3 Expressive Syntax Theme --- */
+/* === Highlight.js - MD3 Expressive Syntax Theme === */
 
-/* --- Light Mode Syntax Colors (palette: primary #39608F, tertiary #6C5677) --- */
+/* === Light Mode Syntax Colors (palette: primary #39608F, tertiary #6C5677) === */
 
 .hljs {
   color: #191C20;
@@ -449,7 +449,7 @@
   font-weight: 700;
 }
 
-/* --- Dark Mode Syntax Colors (palette: primary #A2C9FE, tertiary #D8BDE3) --- */
+/* === Dark Mode Syntax Colors (palette: primary #A2C9FE, tertiary #D8BDE3) === */
 
 @media (prefers-color-scheme: dark) {
   .hljs {

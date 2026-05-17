@@ -2,16 +2,17 @@
 
 # Lumi AI ✨
 
-A friendly, human-like AI chatbot powered by Google's Gemini models via the Antigravity API.
+A friendly, human-like AI chatbot powered by Google's Gemini models via the Gemini API.
 
 ## Features 🌟
 
-- **Gemini models** - Gemini 2.5 Flash, 2.5 Pro, 3 Flash Preview, and 3 Pro Preview
-- **Thinking** - Configurable thinking levels and budgets per model
+- **Gemini models** - Gemini 3.1 Flash Lite, Gemma 4 26B, and Gemma 4 31B
+- **Thinking** - Configurable thinking levels per model
 - **Branching** - Edit messages and navigate between response branches
 - **Custom instructions** - Create, toggle, and stack custom instructions to personalize AI behavior
 - **File attachments** - Images, PDFs, and other files as context
 - **Google Search** - Grounded responses with web search integration
+- **Code Execution** - Run Python code and render outputs inline
 - **Markdown rendering** - Code highlighting, LaTeX, and rich formatting
 - **Background streaming** - Responses continue even when switching conversations
 - **Local storage** - Conversations stored locally via IndexedDB
@@ -25,8 +26,6 @@ A friendly, human-like AI chatbot powered by Google's Gemini models via the Anti
 | Linux | AppImage, DEB, RPM | [GitHub Releases](https://github.com/iamlooper/Lumi-AI/releases) |
 
 > **Linux (Arch/Fedora-based distros):** If the AppImage crashes with an EGL display error, install the `.deb` (via `debtap`) or `.rpm` (via `rpmextract`) package instead.
-
-> **Web:** A hosted web version isn't available because OAuth authentication requires a localhost callback, which only works on your own machine. To try Lumi AI in the browser, clone the repo and run `bun run dev` locally.
 
 ## Screenshots 📱
 
@@ -62,14 +61,6 @@ bun run tauri build
 - [Emad](https://t.me/emadseed) - Tester
 - [SyntaxSpin](https://Syntaxspin) - Tester
 - [inulute](https://t.me/inulute) - Tester
-- [opencode-antigravity-auth](https://github.com/NoeFabris/opencode-antigravity-auth) - Antigravity API reference (MIT License)
-- [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) - Antigravity API reference (MIT License)
-
-## Disclaimer ⚠️
-
-This is an independent open-source project. It is not endorsed by, sponsored by, or affiliated with Google LLC in any capacity. Use of this software may conflict with Google's Terms of Service — accounts may face restrictions or suspension. We recommend against using your primary Google account. This software is provided "as is" without warranties of any kind.
-
-"Antigravity", "Gemini", "Google Cloud", and "Google" are registered trademarks of Google LLC.
 
 ## License 📄
 
