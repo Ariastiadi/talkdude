@@ -15,6 +15,38 @@ export interface Conversation {
   thinkingEnabled?: boolean;
   thinkingLevel?: string;
   codeExecutionEnabled?: boolean;
+  /** talkdude: character this chat is with (Chai / Character.AI style). */
+  characterId?: string;
+  /** talkdude: pinned memories, always sent to the model (max 15). */
+  memories?: PinnedMemory[];
+}
+
+export interface PinnedMemory {
+  id: string;
+  text: string;
+  createdAt: number;
+}
+
+/** talkdude character card (compatible with Character Card V2 fields). */
+export interface Character {
+  id: string;
+  name: string;
+  /** Emoji, or a data: URL image. */
+  avatar: string;
+  /** Short line under the name (max ~60 chars). */
+  tagline: string;
+  /** Personality, backstory, how they talk (the "definition"). */
+  personality: string;
+  /** Optional setting / situation of the chat. */
+  scenario: string;
+  /** First message the character sends. */
+  greeting: string;
+  /** Example dialogue lines ({{user}}: / {{char}}:). */
+  exampleDialogue: string;
+  tags: string[];
+  builtIn?: boolean;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface Message {
@@ -24,6 +56,9 @@ export interface Message {
   parts: MessagePart[];
   createdAt: number;
   branchGroupId?: string; // Shared ID across all versions of this message at a branch point
+  /** talkdude: alternative replies for a model message ("swipes"). */
+  swipes?: MessagePart[][];
+  swipeIndex?: number;
 }
 
 export interface MessageBranch {
@@ -88,6 +123,7 @@ class LumiDB extends Dexie {
   thoughtSignatures!: EntityTable<ThoughtSignatureEntry, "id">;
   messageBranches!: EntityTable<MessageBranch, "id">;
   customInstructions!: EntityTable<CustomInstruction, "id">;
+  characters!: EntityTable<Character, "id">;
 
   constructor() {
     super("LumiAI");
@@ -162,6 +198,17 @@ class LumiDB extends Dexie {
           return { ...msg, parts: msg.parts.filter((p) => p.type !== "inlineData") };
         });
       });
+    });
+
+    // v6 (talkdude): characters table. New conversation/message fields need no index.
+    this.version(6).stores({
+      conversations: "id, updatedAt",
+      messages: "id, conversationId, createdAt, branchGroupId",
+      settings: "key",
+      thoughtSignatures: "id, conversationId, model",
+      messageBranches: "id, conversationId, branchGroupId",
+      customInstructions: "id",
+      characters: "id, updatedAt",
     });
   }
 }

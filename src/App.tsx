@@ -2,11 +2,15 @@ import { Show, onMount } from "solid-js";
 import { apiKeyDialogOpen, isOnboardingFlow, initAuth } from "./lib/stores/auth";
 import { loadConversations } from "./lib/stores/chat";
 import { loadCustomInstructions } from "./lib/stores/custom-instructions";
+import { initSettings, settingsDialogOpen } from "./lib/stores/settings";
+import { loadCharacters, charactersViewOpen } from "./lib/stores/characters";
 import { initDB } from "./lib/db";
 import { isTauri, isMobile, platformOpenUrl } from "./lib/platform";
 import { createSignal } from "solid-js";
 
-import LoginScreen, { ApiKeyDialog } from "./components/LoginScreen";
+import LoginScreen from "./components/LoginScreen";
+import SettingsDialog from "./components/SettingsDialog";
+import CharactersView from "./components/CharactersView";
 import Sidebar from "./components/Sidebar";
 import ChatView from "./components/ChatView";
 import "./lib/material-web";
@@ -22,7 +26,9 @@ function App() {
 
   onMount(async () => {
     await initDB();
+    await initSettings();
     await initAuth();
+    await loadCharacters();
     await loadConversations();
     await loadCustomInstructions();
     setAppReady(true);
@@ -114,11 +120,13 @@ function App() {
             <Sidebar />
           </div>
           <div class="chat-container">
-            <ChatView />
+            <Show when={charactersViewOpen()} fallback={<ChatView />}>
+              <CharactersView />
+            </Show>
           </div>
-          {/* Dialog overlay for reconfiguring the API key after initial setup. */}
-          <Show when={apiKeyDialogOpen() && !isOnboardingFlow()}>
-            <ApiKeyDialog />
+          {/* Settings overlay (API keys, providers, appearance). */}
+          <Show when={settingsDialogOpen()}>
+            <SettingsDialog />
           </Show>
         </div>
       </Show>

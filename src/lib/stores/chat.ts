@@ -1,6 +1,6 @@
 import { createSignal, createMemo, batch } from "solid-js";
 import { createStore, produce } from "solid-js/store";
-import { db, type Conversation, type Message, type MessagePart } from "../db";
+import { db, type Conversation, type Message, type MessagePart, type PinnedMemory } from "../db";
 import { streamChat, sendChat, uploadFile, getCurrentApiKeyHint, type StreamCallbacks } from "../api/gemini";
 import type {
   GeminiContent,
@@ -12,6 +12,10 @@ import type {
 } from "../api/types";
 import { DEFAULT_MODEL_ID, TITLE_MODEL, modelSupportsCodeExecution, modelSupportsUrlContext } from "../api/types";
 import { getActiveSystemInstruction } from "./custom-instructions";
+import { isGeminiModelId, persistSelectedModel, loadSelectedModel } from "./settings";
+import {
+  getCharacter, buildCharacterPrompt, buildPersonaPrompt, buildMemoryPrompt, fillNames, MAX_MEMORIES,
+} from "./characters";
 import { thinkingEnabled, setThinkingEnabled, thinkingLevel, setThinkingLevel, usesLevelBasedThinking, modelSupportsThinking, modelAlwaysThinking, clampThinkingLevelForModel } from "./thinking";
 
 // === Helpers ===
@@ -296,6 +300,17 @@ export function loadAttachmentsFromParts(parts: MessagePart[]): void {
 export async function loadConversations(): Promise<void> {
   const all = await db.conversations.orderBy("updatedAt").reverse().toArray();
   setConversations(all);
+  // Restore the last used model for new chats (any provider).
+  const last = await loadSelectedModel();
+  if (last) setSelectedModel(last);
+}
+
+/** Changes the model for the current chat and remembers it for new chats. */
+export function chooseModel(modelId: string): void {
+  setSelectedModel(modelId);
+  clampThinkingLevelForModel(modelId);
+  clampUrlContextForModel(modelId);
+  void persistSelectedModel(modelId);
 }
 
 export async function selectConversation(id: string | null): Promise<void> {
@@ -788,6 +803,11 @@ export async function retryMessage(): Promise<void> {
   const lastMsg = allMsgs[allMsgs.length - 1];
   if (lastMsg.role !== "model") return;
 
+  // Keep the current answer (and earlier swipes) so the new one becomes a swipe.
+  const previousSwipes = toPlain(lastMsg.swipes && lastMsg.swipes.length > 0 ? lastMsg.swipes : [lastMsg.parts]);
+  swipeStash.set(convId, previousSwipes);
+  const restoreMsg = toPlain(lastMsg);
+
   // Delete the last model message from DB and state
   await db.messages.delete(lastMsg.id);
   setMessages(produce((draft) => draft.pop()));
@@ -807,7 +827,12 @@ export async function retryMessage(): Promise<void> {
   const keyHint = await getCurrentApiKeyHint();
   const contents = buildContentsFromMessages(remainingMsgs, keyHint);
   const userText = prevUserMsg?.parts.find((p) => p.type === "text")?.text ?? "";
-  await startStream(convId, contents, userText, remainingMsgs.length, retryBranchCtx);
+  await startStream(convId, contents, userText, remainingMsgs.length, retryBranchCtx, async () => {
+    // Generation failed: put the previous answer back.
+    swipeStash.delete(convId);
+    await db.messages.put(restoreMsg);
+    setMessages(produce((draft) => { if (!draft.some((m) => m.id === restoreMsg.id)) draft.push(restoreMsg); }));
+  });
 }
 
 /**
@@ -1180,7 +1205,10 @@ async function generateTitle(userText: string, modelText: string, convId: string
       },
     ];
 
-    const result = await sendChat(TITLE_MODEL, contents, { maxOutputTokens: 30 });
+    // Gemini chats use the cheap title model; other providers use their own model.
+    const current = selectedModel();
+    const titleModel = isGeminiModelId(current) ? TITLE_MODEL : current;
+    const result = await sendChat(titleModel, contents, { maxOutputTokens: 60 });
     const title = result.parts
       .filter((p) => p.text)
       .map((p) => p.text!)
@@ -1356,6 +1384,13 @@ async function startStream(
           parts,
           createdAt: Date.now(),
         };
+        // Regenerated reply: keep the earlier answers as swipes.
+        const stash = swipeStash.get(convId);
+        if (stash) {
+          swipeStash.delete(convId);
+          assistantMsg.swipes = [...stash, toPlain(parts)];
+          assistantMsg.swipeIndex = assistantMsg.swipes.length - 1;
+        }
 
         if (isViewing()) {
           // Normal: save to DB and push to UI
@@ -1422,8 +1457,8 @@ async function startStream(
           if (conv) conv.updatedAt = Date.now();
         }));
 
-        // Title generation on first exchange
-        if (turnCount <= 1 && fullText) {
+        // Title generation on first exchange (character chats keep the character's name)
+        if (turnCount <= 1 && fullText && !conversations.find((c) => c.id === convId)?.characterId) {
           generateTitle(userText, fullText, convId);
         }
       }
@@ -1448,7 +1483,8 @@ async function startStream(
   };
 
   try {
-    await streamChat(model, contents, generationConfig, getActiveSystemInstruction(), callbacks, controller.signal, tools);
+    const sys = buildSystemFor(convId);
+    await streamChat(model, contents, generationConfig, sys.text, callbacks, controller.signal, tools, { replaceBase: sys.replaceBase });
   } catch (err) {
     // Network error: streamChat threw before callbacks fired.
     backgroundStreams.delete(convId);
@@ -1545,4 +1581,103 @@ export async function recoverSession(conversationId: string): Promise<void> {
   }
   await selectConversation(conversationId);
   setChatError(null);
+}
+
+
+// === talkdude: Characters, Swipes, Reply Editing, Pinned Memories ===
+
+/** Earlier answers waiting to be attached to a regenerated reply, per conversation. */
+const swipeStash = new Map<string, MessagePart[][]>();
+
+/** Builds the system instruction for a conversation (character, persona, memories, custom instructions). */
+function buildSystemFor(convId: string): { text: string | undefined; replaceBase: boolean } {
+  const conv = conversations.find((c) => c.id === convId);
+  const character = getCharacter(conv?.characterId);
+  const blocks = [
+    character ? buildCharacterPrompt(character) : undefined,
+    buildPersonaPrompt(),
+    buildMemoryPrompt(conv?.memories),
+    getActiveSystemInstruction(),
+  ].filter((b): b is string => !!b && b.trim().length > 0);
+  return { text: blocks.length ? blocks.join("\n\n") : undefined, replaceBase: !!character };
+}
+
+/** Starts a new chat with a character; the character's greeting becomes the first message. */
+export async function startCharacterChat(characterId: string): Promise<void> {
+  const character = getCharacter(characterId);
+  if (!character) return;
+  const convId = await createConversation(character.name);
+  await db.conversations.update(convId, { characterId });
+  setConversations(produce((draft) => {
+    const conv = draft.find((c) => c.id === convId);
+    if (conv) conv.characterId = characterId;
+  }));
+  const greeting = fillNames(character.greeting.trim(), character.name);
+  if (greeting) {
+    const msg: Message = {
+      id: crypto.randomUUID(),
+      conversationId: convId,
+      role: "model",
+      parts: [{ type: "text", text: greeting }],
+      createdAt: Date.now(),
+    };
+    await db.messages.put(msg);
+    setMessages(produce((draft) => draft.push(msg)));
+  }
+}
+
+/** Shows another saved answer ("swipe") on a model message. */
+export async function swipeTo(messageId: string, index: number): Promise<void> {
+  const msg = messages.find((m) => m.id === messageId);
+  if (!msg || !msg.swipes || index < 0 || index >= msg.swipes.length) return;
+  const parts = toPlain(msg.swipes[index]);
+  setMessages(produce((draft) => {
+    const m = draft.find((x) => x.id === messageId);
+    if (m) { m.parts = parts; m.swipeIndex = index; }
+  }));
+  await db.messages.update(messageId, { parts, swipeIndex: index });
+}
+
+/** Edits the text of a model reply (Chai / Character.AI "edit"). */
+export async function editModelReply(messageId: string, newText: string): Promise<void> {
+  const msg = messages.find((m) => m.id === messageId);
+  if (!msg || msg.role !== "model") return;
+  const kept = toPlain(msg.parts).filter((p) => p.type !== "text");
+  const firstTextIdx = msg.parts.findIndex((p) => p.type === "text");
+  const insertAt = firstTextIdx === -1 ? kept.length : Math.min(firstTextIdx, kept.length);
+  const parts: MessagePart[] = [...kept.slice(0, insertAt), { type: "text", text: newText }, ...kept.slice(insertAt)];
+  const swipes = msg.swipes ? toPlain(msg.swipes) : undefined;
+  if (swipes && msg.swipeIndex !== undefined) swipes[msg.swipeIndex] = parts;
+  setMessages(produce((draft) => {
+    const m = draft.find((x) => x.id === messageId);
+    if (m) { m.parts = parts; if (swipes) m.swipes = swipes; }
+  }));
+  await db.messages.update(messageId, swipes ? { parts, swipes } : { parts });
+}
+
+async function writeMemories(convId: string, memories: PinnedMemory[]): Promise<void> {
+  await db.conversations.update(convId, { memories: toPlain(memories) });
+  setConversations(produce((draft) => {
+    const conv = draft.find((c) => c.id === convId);
+    if (conv) conv.memories = memories;
+  }));
+}
+
+/** Pins text to the current conversation's memory (max 15, newest kept). */
+export async function addMemory(text: string): Promise<boolean> {
+  const convId = activeConversationId();
+  const clean = text.trim().replace(/\s+/g, " ").slice(0, 800);
+  if (!convId || !clean) return false;
+  const current = conversations.find((c) => c.id === convId)?.memories ?? [];
+  if (current.some((m) => m.text === clean)) return true;
+  if (current.length >= MAX_MEMORIES) return false;
+  await writeMemories(convId, [...toPlain(current), { id: crypto.randomUUID(), text: clean, createdAt: Date.now() }]);
+  return true;
+}
+
+export async function removeMemory(memoryId: string): Promise<void> {
+  const convId = activeConversationId();
+  if (!convId) return;
+  const current = conversations.find((c) => c.id === convId)?.memories ?? [];
+  await writeMemories(convId, toPlain(current).filter((m) => m.id !== memoryId));
 }

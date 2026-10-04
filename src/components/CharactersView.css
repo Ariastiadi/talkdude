@@ -1,0 +1,290 @@
+/* === Characters (Chai / Character.AI style) === */
+
+.characters-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--md-sys-color-background);
+}
+
+.characters-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 20px 32px;
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.characters-head {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 8px 0 12px;
+}
+
+.characters-search {
+  flex: 1;
+  min-width: 220px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  height: 44px;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-sys-color-surface-container);
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.characters-search input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--md-sys-color-on-surface);
+  font: inherit;
+  font-size: 15px;
+}
+
+.characters-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.category-chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  margin-bottom: 12px;
+  scrollbar-width: none;
+}
+
+.category-chip {
+  flex-shrink: 0;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  background: transparent;
+  color: var(--md-sys-color-on-surface);
+  border-radius: var(--md-sys-shape-corner-full);
+  padding: 6px 14px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.category-chip.active {
+  background: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+  border-color: var(--md-sys-color-primary);
+}
+
+.category-chip.small {
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: default;
+}
+
+.characters-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.character-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border-radius: var(--md-sys-shape-corner-large);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  background: var(--md-sys-color-surface-container-low);
+  color: var(--md-sys-color-on-surface);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  transition: background var(--motion-duration-short) var(--motion-easing-standard);
+}
+
+.character-card:hover {
+  background: var(--md-sys-color-surface-container-high);
+}
+
+.character-card-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.character-name {
+  font-weight: 600;
+}
+
+.character-tagline {
+  color: var(--md-sys-color-on-surface-variant);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.mine-badge {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--td-accent);
+}
+
+.characters-empty {
+  text-align: center;
+  color: var(--md-sys-color-on-surface-variant);
+  margin-top: 32px;
+}
+
+/* Avatar used everywhere (grid, chat, sidebar) */
+.char-avatar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--md-sys-color-surface-container-highest);
+  line-height: 1;
+  user-select: none;
+}
+
+.char-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.character-detail {
+  gap: 14px;
+}
+
+.character-detail-head {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.character-greeting {
+  white-space: pre-wrap;
+  background: var(--md-sys-color-surface-container);
+  border-radius: var(--md-sys-shape-corner-medium);
+  padding: 12px 14px;
+  max-height: 200px;
+  overflow-y: auto;
+  color: var(--md-sys-color-on-surface);
+}
+
+.character-tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.character-editor .settings-body {
+  max-height: calc(100vh - 140px);
+}
+
+.editor-avatar-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.editor-emoji {
+  width: 120px;
+}
+
+/* Chat: swipes, pinned memories, reply editing */
+.swipe-nav {
+  display: inline-flex;
+  align-items: center;
+}
+
+.memory-panel {
+  position: absolute;
+  top: 56px;
+  right: 12px;
+  z-index: 50;
+  width: min(360px, calc(100vw - 24px));
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--md-sys-color-surface-container-highest);
+  border-radius: var(--md-sys-shape-corner-large);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.memory-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 4px 8px 10px;
+  border-radius: var(--md-sys-shape-corner-medium);
+  background: var(--md-sys-color-surface-container);
+  color: var(--md-sys-color-on-surface);
+}
+
+.memory-item span {
+  flex: 1;
+  white-space: pre-wrap;
+}
+
+.memory-add {
+  display: flex;
+  gap: 6px;
+}
+
+.memory-add input {
+  flex: 1;
+}
+
+.topbar-badge {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--td-accent);
+  margin-left: -6px;
+}
+
+.reply-editor {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+}
+
+.sidebar-characters-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: calc(100% - 24px);
+  margin: 0 12px 8px;
+  padding: 10px 14px;
+  border-radius: var(--md-sys-shape-corner-full);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  background: transparent;
+  color: var(--md-sys-color-on-surface);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.sidebar-characters-btn:hover {
+  background: var(--md-sys-color-surface-container-high);
+}
+
+.chat-topbar {
+  position: relative;
+}
