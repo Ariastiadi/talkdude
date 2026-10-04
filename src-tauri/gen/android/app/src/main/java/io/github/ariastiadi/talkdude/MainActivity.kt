@@ -1,4 +1,4 @@
-package io.github.iamlooper.lumiai
+package io.github.ariastiadi.talkdude
 
 import android.os.Bundle
 import androidx.activity.enableEdgeToEdge

@@ -16,10 +16,10 @@ val tauriProperties = Properties().apply {
 
 android {
     compileSdk = 36
-    namespace = "io.github.iamlooper.lumiai"
+    namespace = "io.github.ariastiadi.talkdude"
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
-        applicationId = "io.github.iamlooper.lumiai"
+        applicationId = "io.github.ariastiadi.talkdude"
         minSdk = 24
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
@@ -64,6 +64,8 @@ android {
             }
         }
         getByName("release") {
+            // Allow plain HTTP so a phone can reach Ollama / LM Studio running on a PC in the same Wi-Fi.
+            manifestPlaceholders["usesCleartextTraffic"] = "true"
             signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             proguardFiles(

@@ -1,5 +1,15 @@
 import { createSignal } from "solid-js";
 import { getApiKey, setApiKey, clearApiKey, validateApiKey } from "../auth/apikey";
+import { db } from "../db";
+import { providers, providerUsable } from "./settings";
+
+// Set once the user has skipped or finished the first-run key screen, so it
+// doesn't come back on every launch for people who only use other providers.
+const ONBOARDED_KEY = "talkdude_onboarded";
+
+async function markOnboarded(): Promise<void> {
+  try { await db.settings.put({ key: ONBOARDED_KEY, value: true }); } catch { /* ignore */ }
+}
 
 // === State ===
 
@@ -20,7 +30,8 @@ export async function initAuth(): Promise<void> {
   try {
     const key = await getApiKey();
     setApiKeySignal(key);
-    if (!key) {
+    const onboarded = (await db.settings.get(ONBOARDED_KEY).catch(() => undefined))?.value === true;
+    if (!key && !onboarded && !providers().some(providerUsable)) {
       setIsOnboardingFlow(true);
       setApiKeyDialogOpen(true);
     }
@@ -32,7 +43,7 @@ export async function initAuth(): Promise<void> {
 }
 
 /**
- * Opens the API key dialog (e.g. from the sidebar).
+ * Opens the first-run API key screen again (e.g. after removing the key).
  */
 export function openApiKeyDialog(): void {
   setApiKeyError(null);
@@ -44,6 +55,7 @@ export function openApiKeyDialog(): void {
  * Closes the API key dialog without saving (skip).
  */
 export function closeApiKeyDialog(): void {
+  void markOnboarded();
   setApiKeyDialogOpen(false);
   setApiKeyError(null);
   setIsOnboardingFlow(false);
@@ -71,6 +83,7 @@ export async function submitApiKey(key: string): Promise<void> {
     }
     await setApiKey(trimmed);
     setApiKeySignal(trimmed);
+    void markOnboarded();
     setIsOnboardingFlow(false);
     setApiKeyDialogOpen(false);
   } catch (err) {
@@ -87,8 +100,8 @@ export async function removeApiKey(): Promise<void> {
   await clearApiKey();
   setApiKeySignal(null);
   setApiKeyError(null);
-  // Keep overlay mode; user is already inside the app shell.
+  // The Settings dialog stays open; nothing else to show.
   setIsOnboardingFlow(false);
-  setApiKeyDialogOpen(true);
+  setApiKeyDialogOpen(false);
 }
 

@@ -20,7 +20,6 @@ import {
   navigateBranch,
   branchState,
   selectedModel,
-  setSelectedModel,
   searchEnabled,
   setSearchEnabled,
   urlContextEnabled,
@@ -40,8 +39,16 @@ import {
   recoveryAttachments,
   setRecoveryText,
   setRecoveryAttachments,
-  clampUrlContextForModel,
+  chooseModel,
+  activeConversation as activeConv,
+  swipeTo,
+  editModelReply,
+  addMemory,
+  removeMemory,
 } from "../lib/stores/chat";
+import { getCharacter, MAX_MEMORIES } from "../lib/stores/characters";
+import { CharacterAvatar } from "./CharactersView";
+import { providers, isGeminiModelId, makeModelId, modelLabel } from "../lib/stores/settings";
 import type { Message, MessagePart } from "../lib/db";
 import { AVAILABLE_MODELS, modelSupportsCodeExecution, modelSupportsUrlContext } from "../lib/api/types";
 import { renderMarkdown } from "../lib/markdown";
@@ -58,7 +65,6 @@ import {
   thinkingLevel, setThinkingLevel,
   usesLevelBasedThinking, modelSupportsThinking,
   modelAlwaysThinking, getModelThinkingLevels,
-  clampThinkingLevelForModel,
 } from "../lib/stores/thinking";
 import { sidebarOpen, setSidebarOpen } from "../App";
 import { isTauri, isAndroid } from "../lib/platform";
@@ -132,6 +138,22 @@ export default function ChatView() {
 
   // Edit mode state: message id being edited, text populates the main input
   const [editingMessageId, setEditingMessageId] = createSignal<string | null>(null);
+  // talkdude: reply editing and pinned memories
+  const [editingReplyId, setEditingReplyId] = createSignal<string | null>(null);
+  const [editingReplyText, setEditingReplyText] = createSignal("");
+  const [memoryOpen, setMemoryOpen] = createSignal(false);
+  const [memoryDraft, setMemoryDraft] = createSignal("");
+  const activeCharacter = () => getCharacter(activeConv()?.characterId);
+  const memories = () => activeConv()?.memories ?? [];
+  const messagePlainText = (msg: Message) => msg.parts
+    .filter((p) => p.type === "text")
+    .map((p) => (p as { type: "text"; text: string }).text)
+    .join("\n");
+  const ModelAvatar = () => (
+    <Show when={activeCharacter()} fallback={<div class="avatar-icon lumi-logo" />}>
+      {(ch) => <CharacterAvatar avatar={ch().avatar} size={34} />}
+    </Show>
+  );
 
   // Stable greeting/subtitle/suggestions per mount
   const { greeting, subtitle } = getGreetingAndSubtitle();
@@ -260,8 +282,12 @@ export default function ChatView() {
   };
 
   const currentModelName = () => {
-    return AVAILABLE_MODELS.find((m) => m.id === selectedModel())?.name ?? selectedModel();
+    return AVAILABLE_MODELS.find((m) => m.id === selectedModel())?.name ?? modelLabel(selectedModel());
   };
+
+  // Gemini-only features (Files API attachments, Google Search, URL Context,
+  // Code Execution) are hidden when another provider's model is selected.
+  const isGemini = () => isGeminiModelId(selectedModel());
 
   // === Edit Mode Helpers ===
 
@@ -489,7 +515,7 @@ export default function ChatView() {
   const downloadInlineImage = async (mimeType: string, base64Data: string, label?: string): Promise<void> => {
     const ext = mimeType.split("/")[1]?.replace("jpeg", "jpg") ?? "png";
     const uid = crypto.randomUUID();
-    const filename = label ? `${label}.${ext}` : `lumi-ai-image-${uid}.${ext}`;
+    const filename = label ? `${label}.${ext}` : `talkdude-image-${uid}.${ext}`;
     const bytes = Uint8Array.from(atob(base64Data), (c) => c.charCodeAt(0));
 
     if (isTauri() && isAndroid()) {
@@ -593,7 +619,7 @@ export default function ChatView() {
       <div class={`message ${isUser ? "message-user" : "message-model"}`}>
         <Show when={!isUser}>
           <div class="message-avatar">
-            <div class="avatar-icon lumi-logo" />
+            <ModelAvatar />
           </div>
         </Show>
         <div class="message-content-wrapper">
@@ -636,11 +662,25 @@ export default function ChatView() {
 
           {/* Bubble: model gets all parts; user gets only text parts */}
           <Show when={!isUser || userTextParts().length > 0}>
-            <div class={`message-bubble ${isUser ? "bubble-user" : "bubble-model"}`}>
-              <For each={isUser ? userTextParts() : msg.parts}>
-                {(part) => renderPart(part, isUser)}
-              </For>
-            </div>
+            <Show when={editingReplyId() === msg.id} fallback={
+              <div class={`message-bubble ${isUser ? "bubble-user" : "bubble-model"}`}>
+                <For each={isUser ? userTextParts() : msg.parts}>
+                  {(part) => renderPart(part, isUser)}
+                </For>
+              </div>
+            }>
+              <div class="message-bubble bubble-model">
+                <textarea
+                  class="api-key-input reply-editor"
+                  value={editingReplyText()}
+                  onInput={(e) => setEditingReplyText(e.currentTarget.value)}
+                />
+                <div class="settings-row">
+                  <md-filled-button type="button" onClick={async () => { await editModelReply(msg.id, editingReplyText()); setEditingReplyId(null); }}>Save</md-filled-button>
+                  <button type="button" class="login-text-btn" onClick={() => setEditingReplyId(null)}>Cancel</button>
+                </div>
+              </div>
+            </Show>
           </Show>
 
           <div class={`message-actions ${isUser ? "actions-user" : "actions-model"}`}>
@@ -676,8 +716,36 @@ export default function ChatView() {
               }}
             </Show>
 
+            {/* Swipes: other saved answers for the latest reply */}
+            <Show when={!isUser && isLast() && (msg.swipes?.length ?? 0) > 1}>
+              <div class="swipe-nav">
+                <md-icon-button class="action-btn" type="button" aria-label="Previous answer"
+                  disabled={(msg.swipeIndex ?? 0) <= 0 || isStreaming()}
+                  onClick={() => swipeTo(msg.id, (msg.swipeIndex ?? 0) - 1)}>
+                  <md-icon>chevron_left</md-icon>
+                </md-icon-button>
+                <span class="branch-indicator md-typescale-label-small">{(msg.swipeIndex ?? 0) + 1}/{msg.swipes!.length}</span>
+                <md-icon-button class="action-btn" type="button" aria-label="Next answer"
+                  disabled={(msg.swipeIndex ?? 0) >= msg.swipes!.length - 1 || isStreaming()}
+                  onClick={() => swipeTo(msg.id, (msg.swipeIndex ?? 0) + 1)}>
+                  <md-icon>chevron_right</md-icon>
+                </md-icon-button>
+              </div>
+            </Show>
+
             <md-icon-button class="action-btn" type="button" onClick={() => copyMessageText(msg)}>
               <md-icon>content_copy</md-icon>
+            </md-icon-button>
+            <Show when={!isUser && !isStreaming()}>
+              <md-icon-button class="action-btn" type="button" aria-label="Edit reply" onClick={() => { setEditingReplyText(messagePlainText(msg)); setEditingReplyId(msg.id); }}>
+                <md-icon>edit_note</md-icon>
+              </md-icon-button>
+            </Show>
+            <md-icon-button class="action-btn" type="button" aria-label="Pin to memory" onClick={async () => {
+              const ok = await addMemory(messagePlainText(msg));
+              showSnackbar(ok ? "Pinned to memory" : `Memory is full (max ${MAX_MEMORIES}). Unpin something first.`);
+            }}>
+              <md-icon>push_pin</md-icon>
             </md-icon-button>
             <Show when={isUser && !isStreaming()}>
               <md-icon-button class="action-btn" type="button" onClick={() => startEdit(msg)}>
@@ -813,7 +881,7 @@ export default function ChatView() {
             <textarea
               ref={inputRef}
               rows={1}
-              placeholder={editingMessageId() ? "Edit your message..." : "Message Lumi AI..."}
+              placeholder={editingMessageId() ? "Edit your message..." : `Message ${activeCharacter()?.name ?? "talkdude"}…`}
               class="chat-input"
               onKeyDown={handleKeyDown}
               disabled={isViewingActiveStream()}
@@ -826,15 +894,17 @@ export default function ChatView() {
           </div>
         </div>
         <div class="input-toolbar">
-          {/* Attach button */}
-          <md-icon-button
-            type="button"
-            aria-label="Attach files"
-            onClick={() => fileInputRef?.click()}
-            disabled={isViewingActiveStream()}
-          >
-            <md-icon>add</md-icon>
-          </md-icon-button>
+          {/* Attach button (Gemini Files API only) */}
+          <Show when={isGemini()}>
+            <md-icon-button
+              type="button"
+              aria-label="Attach files"
+              onClick={() => fileInputRef?.click()}
+              disabled={isViewingActiveStream()}
+            >
+              <md-icon>add</md-icon>
+            </md-icon-button>
+          </Show>
           <input
             ref={fileInputRef}
             type="file"
@@ -844,7 +914,8 @@ export default function ChatView() {
             onChange={handleFileSelect}
           />
 
-          {/* Tools button */}
+          {/* Tools button (Gemini only) */}
+          <Show when={isGemini()}>
           <div class="toolbar-menu-anchor">
             <md-icon-button
               type="button"
@@ -905,6 +976,7 @@ export default function ChatView() {
               <div class="popup-backdrop" onClick={() => setToolsMenuOpen(false)} />
             </Show>
           </div>
+          </Show>
 
           {/* Custom Instructions button */}
           <div class="toolbar-menu-anchor">
@@ -1082,15 +1154,14 @@ export default function ChatView() {
             </button>
             <Show when={modelMenuOpen()}>
               <div class="toolbar-popup model-popup" onClick={(e) => e.stopPropagation()}>
+                <div class="popup-header md-typescale-title-small">Gemini</div>
                 <For each={AVAILABLE_MODELS}>
                   {(model) => (
                     <button
                       type="button"
                       class={`model-option ${model.id === selectedModel() ? "selected" : ""}`}
                       onClick={() => {
-                        setSelectedModel(model.id);
-                        clampThinkingLevelForModel(model.id);
-                        clampUrlContextForModel(model.id);
+                        chooseModel(model.id);
                         setModelMenuOpen(false);
                       }}
                     >
@@ -1103,6 +1174,38 @@ export default function ChatView() {
                     </button>
                   )}
                 </For>
+                <For each={providers()}>
+                  {(provider) => (
+                    <Show when={provider.models.length > 0}>
+                      <div class="popup-header md-typescale-title-small">{provider.name}</div>
+                      <For each={provider.models}>
+                        {(m) => {
+                          const id = makeModelId(provider.id, m);
+                          return (
+                            <button
+                              type="button"
+                              class={`model-option ${id === selectedModel() ? "selected" : ""}`}
+                              onClick={() => {
+                                chooseModel(id);
+                                setModelMenuOpen(false);
+                              }}
+                            >
+                              <div>
+                                <div class="md-typescale-body-medium">{m}</div>
+                              </div>
+                              <Show when={id === selectedModel()}>
+                                <md-icon class="model-check">check_circle</md-icon>
+                              </Show>
+                            </button>
+                          );
+                        }}
+                      </For>
+                    </Show>
+                  )}
+                </For>
+                <Show when={providers().length === 0}>
+                  <div class="model-popup-hint md-typescale-body-small">Add more providers (OpenAI, Claude, Groq, …) in Settings.</div>
+                </Show>
               </div>
               <div class="popup-backdrop" onClick={() => setModelMenuOpen(false)} />
             </Show>
@@ -1129,10 +1232,44 @@ export default function ChatView() {
         <md-icon-button class="sidebar-toggle" type="button" aria-label="Toggle sidebar" onClick={() => setSidebarOpen((prev) => !prev)}>
           <md-icon>{sidebarOpen() ? "menu_open" : "menu"}</md-icon>
         </md-icon-button>
+        <Show when={activeCharacter()}>
+          {(ch) => <CharacterAvatar avatar={ch().avatar} size={28} />}
+        </Show>
         <span class="md-typescale-title-medium chat-topbar-title">
-          {activeConversation()?.title || "Lumi AI"}
+          {activeConversation()?.title || "talkdude"}
         </span>
         <div class="topbar-spacer" />
+        <Show when={activeConversationId()}>
+          <md-icon-button type="button" aria-label="Pinned memories" onClick={() => setMemoryOpen(!memoryOpen())}>
+            <md-icon>push_pin</md-icon>
+          </md-icon-button>
+          <Show when={memories().length > 0}><span class="topbar-badge">{memories().length}</span></Show>
+        </Show>
+        <Show when={memoryOpen() && activeConversationId()}>
+          <div class="memory-panel" onClick={(e) => e.stopPropagation()}>
+            <div class="popup-header md-typescale-title-small">Pinned memories ({memories().length}/{MAX_MEMORIES})</div>
+            <p class="md-typescale-body-small settings-help">Always sent to the AI in this chat. Pin a message with its pin button, or add a note here.</p>
+            <For each={memories()}>
+              {(m) => (
+                <div class="memory-item md-typescale-body-small">
+                  <span>{m.text}</span>
+                  <md-icon-button class="action-btn" type="button" aria-label="Unpin" onClick={() => removeMemory(m.id)}>
+                    <md-icon>close</md-icon>
+                  </md-icon-button>
+                </div>
+              )}
+            </For>
+            <form class="memory-add" onSubmit={async (e) => {
+              e.preventDefault();
+              const ok = await addMemory(memoryDraft());
+              if (ok) setMemoryDraft(""); else showSnackbar(`Memory is full (max ${MAX_MEMORIES}).`);
+            }}>
+              <input class="api-key-input" placeholder="Add a memory…" value={memoryDraft()} onInput={(e) => setMemoryDraft(e.currentTarget.value)} />
+              <md-filled-button type="submit" disabled={!memoryDraft().trim()}>Add</md-filled-button>
+            </form>
+          </div>
+          <div class="popup-backdrop" onClick={() => setMemoryOpen(false)} />
+        </Show>
         <Show when={activeConversationId()}>
           <md-icon-button type="button" aria-label="New chat" onClick={() => selectConversation(null)}>
             <md-icon>edit_square</md-icon>
@@ -1159,7 +1296,7 @@ export default function ChatView() {
           <Show when={isViewingActiveStream()}>
             <div class="message message-model">
               <div class="message-avatar">
-                <div class="avatar-icon lumi-logo" />
+                <ModelAvatar />
               </div>
               <div class="message-bubble bubble-model">
                 <Show when={streamingThinking()}>

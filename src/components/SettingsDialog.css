@@ -1,0 +1,226 @@
+/* === Settings Dialog (talkdude) === */
+
+.settings-dialog {
+  max-width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  gap: 0;
+  padding: 16px 20px 20px;
+}
+
+.settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 8px 0 12px;
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+}
+
+.settings-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--md-sys-color-on-surface-variant);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  padding: 8px 12px;
+  cursor: pointer;
+  margin-bottom: -1px;
+}
+
+.settings-tab.active {
+  color: var(--md-sys-color-primary);
+  border-bottom-color: var(--md-sys-color-primary);
+}
+
+.settings-body {
+  overflow-y: auto;
+  min-height: 160px;
+  padding-right: 2px;
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.settings-section .api-key-form {
+  gap: 10px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  position: relative;
+}
+
+.settings-help {
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.settings-ok {
+  color: var(--md-sys-color-primary);
+}
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.settings-field .api-key-input {
+  width: 100%;
+}
+
+.settings-textarea {
+  resize: vertical;
+  min-height: 56px;
+  font-family: inherit;
+}
+
+select.api-key-input {
+  appearance: auto;
+}
+
+/* Toggle row reuses .toggle-track / .toggle-thumb from ChatView.css */
+.settings-toggle {
+  display: flex;
+  width: 100%;
+  align-self: stretch;
+  text-align: left;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  cursor: pointer;
+  color: var(--md-sys-color-on-surface);
+}
+
+.settings-toggle > div {
+  flex: 1;
+}
+
+.settings-toggle input[type="checkbox"] {
+  display: none;
+}
+
+.provider-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 4px 8px 12px;
+  border-radius: var(--md-sys-shape-corner-medium);
+  background: var(--md-sys-color-surface-container);
+}
+
+.provider-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.preset-anchor {
+  position: relative;
+}
+
+.preset-menu {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  background: var(--md-sys-color-surface-container-highest);
+  border-radius: var(--md-sys-shape-corner-medium);
+  padding: 4px 0;
+}
+
+.preset-item {
+  background: transparent;
+  border: none;
+  color: var(--md-sys-color-on-surface);
+  text-align: left;
+  padding: 10px 16px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.preset-item:hover {
+  background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent);
+}
+
+.theme-options {
+  display: flex;
+  gap: 8px;
+}
+
+.theme-option {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 8px;
+  border-radius: var(--md-sys-shape-corner-medium);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  background: var(--md-sys-color-surface-container);
+  color: var(--md-sys-color-on-surface);
+  cursor: pointer;
+  font: inherit;
+}
+
+.theme-option.selected {
+  border-color: var(--md-sys-color-primary);
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+}
+
+.model-popup-hint {
+  padding: 10px 16px;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.sidebar-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  background: var(--md-sys-color-inverse-surface);
+  color: var(--md-sys-color-inverse-on-surface);
+  padding: 12px 18px;
+  border-radius: var(--md-sys-shape-corner-small);
+  z-index: 2000;
+  max-width: calc(100vw - 32px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.settings-inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--md-sys-color-on-surface-variant);
+  cursor: pointer;
+}
+
+.free-badge {
+  margin-left: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--td-accent);
+  color: #fff;
+  vertical-align: middle;
+}
