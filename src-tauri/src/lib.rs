@@ -25,7 +25,7 @@ pub fn run() {
             #[cfg(desktop)]
             {
                 window_builder = window_builder
-                    .title("Lumi AI")
+                    .title("talkdude")
                     .inner_size(1024.0, 700.0)
                     .min_inner_size(360.0, 480.0)
                     .visible(false);

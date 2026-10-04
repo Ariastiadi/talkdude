@@ -15,12 +15,19 @@ import {
   unarchiveConversations,
   deleteAllConversations,
   streamingConvIds,
+  loadConversations,
 } from "../lib/stores/chat";
 import type { Conversation } from "../lib/db";
-import { apiKey, openApiKeyDialog } from "../lib/stores/auth";
+import { apiKey } from "../lib/stores/auth";
+import { setSettingsDialogOpen, providers, providerUsable } from "../lib/stores/settings";
+import { exportConversationMarkdown, exportBackup, importBackup } from "../lib/export";
+import { getCharacter, setCharactersViewOpen, loadCharacters } from "../lib/stores/characters";
+import { CharacterAvatar } from "./CharactersView";
 import { setSidebarOpen } from "../App";
 import { platformOpenUrl } from "../lib/platform";
 import "./Sidebar.css";
+
+const REPO_URL = "https://github.com/Ariastiadi/talkdude";
 
 const APP_VERSION = __APP_VERSION__;
 
@@ -35,6 +42,46 @@ export default function Sidebar() {
   const [deleteSelectedConfirm, setDeleteSelectedConfirm] = createSignal(false);
   const [deleteAllConfirm, setDeleteAllConfirm] = createSignal(false);
   const [aboutOpen, setAboutOpen] = createSignal(false);
+  const [toast, setToast] = createSignal<string | null>(null);
+  let toastTimer: ReturnType<typeof setTimeout> | undefined;
+  let restoreInputRef: HTMLInputElement | undefined;
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => setToast(null), 3500);
+  };
+
+  const handleExportChat = async (convId: string) => {
+    const r = await exportConversationMarkdown(convId);
+    showToast(r.message);
+  };
+
+  const handleBackup = async () => {
+    const r = await exportBackup();
+    showToast(r.message);
+  };
+
+  const handleRestoreFile = async (e: Event) => {
+    const input = e.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file) return;
+    try {
+      const n = await importBackup(file);
+      await loadConversations();
+      await loadCharacters();
+      showToast(`${n} conversation${n === 1 ? "" : "s"} restored`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Could not restore the backup");
+    }
+  };
+
+  const keyStatus = () => {
+    const n = (apiKey() ? 1 : 0) + providers().filter(providerUsable).length;
+    if (n === 0) return "No API key yet";
+    return n === 1 ? "1 provider ready" : `${n} providers ready`;
+  };
 
   const isSelectMode = () => selectedIds().size > 0;
 
@@ -84,6 +131,7 @@ export default function Sidebar() {
   );
 
   const handleNewChat = () => {
+    setCharactersViewOpen(false);
     selectConversation(null);
     setSidebarOpen(false);
   };
@@ -169,15 +217,20 @@ export default function Sidebar() {
           onClick={() => {
             if (isSelectMode()) { toggleSelect(conv.id); return; }
             if (renamingId() || renamingJustEnded) return;
+            setCharactersViewOpen(false);
             selectConversation(conv.id);
             setSidebarOpen(false);
           }}
         >
           <Show when={isSelectMode()} fallback={
             <Show when={isConvStreaming()} fallback={
-              <md-icon class="conv-icon">
-                {conv.pinned ? "push_pin" : "chat_bubble_outline"}
-              </md-icon>
+              <Show when={!conv.pinned && getCharacter(conv.characterId)} fallback={
+                <md-icon class="conv-icon">
+                  {conv.pinned ? "push_pin" : "chat_bubble_outline"}
+                </md-icon>
+              }>
+                {(ch) => <CharacterAvatar avatar={ch().avatar} size={22} class="conv-icon" />}
+              </Show>
             }>
               <div class="conv-spinner" />
             </Show>
@@ -220,6 +273,10 @@ export default function Sidebar() {
               <md-icon>edit</md-icon>
               <span>Rename</span>
             </button>
+            <button class="context-menu-item" onClick={() => { handleExportChat(conv.id); setContextMenuId(null); }}>
+              <md-icon>download</md-icon>
+              <span>Export (.md)</span>
+            </button>
             <button class="context-menu-item" onClick={() => { togglePinConversation(conv.id); setContextMenuId(null); }}>
               <md-icon>push_pin</md-icon>
               <span>{conv.pinned ? "Unpin" : "Pin chat"}</span>
@@ -250,7 +307,7 @@ export default function Sidebar() {
         <div class="sidebar-header">
           <div class="sidebar-brand">
             <div class="brand-icon lumi-logo" />
-            <span class="md-typescale-title-medium">Lumi AI</span>
+            <span class="md-typescale-title-medium brand-name">talkdude</span>
           </div>
           <md-icon-button type="button" aria-label="New chat" onClick={handleNewChat}>
             <md-icon>edit_square</md-icon>
@@ -285,6 +342,11 @@ export default function Sidebar() {
           </div>
         </div>
       </Show>
+
+      <button type="button" class="sidebar-characters-btn" onClick={() => { setCharactersViewOpen(true); setSidebarOpen(false); }}>
+        <md-icon>groups</md-icon>
+        <span>Characters</span>
+      </button>
 
       <div class="sidebar-search">
         <md-icon class="search-icon">search</md-icon>
@@ -340,6 +402,15 @@ export default function Sidebar() {
       <div class="sidebar-footer">
         <md-divider></md-divider>
         <div class="sidebar-footer-actions">
+          <button class="footer-action-item" onClick={handleBackup}>
+            <md-icon>cloud_download</md-icon>
+            <span>Back up all chats</span>
+          </button>
+          <button class="footer-action-item" onClick={() => restoreInputRef?.click()}>
+            <md-icon>cloud_upload</md-icon>
+            <span>Restore backup</span>
+          </button>
+          <input ref={restoreInputRef} type="file" accept="application/json,.json" style="display:none" onChange={handleRestoreFile} />
           <button class="footer-action-item" onClick={() => setAboutOpen(true)}>
             <md-icon>info</md-icon>
             <span>About</span>
@@ -356,13 +427,13 @@ export default function Sidebar() {
           <div class="account-info">
             <md-icon class="account-icon">key</md-icon>
             <span class="md-typescale-body-medium account-email">
-              {apiKey() ? "API key configured" : "No API key set"}
+              {keyStatus()}
             </span>
           </div>
           <md-icon-button
             type="button"
-            aria-label="Manage API key"
-            onClick={openApiKeyDialog}
+            aria-label="Settings"
+            onClick={() => setSettingsDialogOpen(true)}
           >
             <md-icon>settings</md-icon>
           </md-icon-button>
@@ -465,15 +536,15 @@ export default function Sidebar() {
             <div class="about-logo-container">
               <div class="about-logo lumi-logo" />
             </div>
-            <h2 class="md-typescale-headline-small confirm-dialog-title">Lumi AI</h2>
+            <h2 class="md-typescale-headline-small confirm-dialog-title brand-name">talkdude</h2>
             <p class="md-typescale-body-medium about-tagline">
-              A friendly, human-like AI chatbot powered by Gemini
+              An honest, laid-back AI chat companion that works with Gemini, Claude, OpenAI, Groq and more.
             </p>
-            <p class="md-typescale-body-small about-version">Version {APP_VERSION}</p>
+            <p class="md-typescale-body-small about-version">Version {APP_VERSION} · GPL-3.0 · based on Lumi AI (MIT) by Looper</p>
             <div class="confirm-dialog-actions about-actions">
               <button
                 class="dialog-btn dialog-btn-cancel"
-                onClick={(e) => { e.preventDefault(); platformOpenUrl("https://github.com/iamlooper/Lumi-AI"); }}
+                onClick={(e) => { e.preventDefault(); platformOpenUrl(REPO_URL); }}
               >
                 GitHub
               </button>
@@ -483,6 +554,13 @@ export default function Sidebar() {
             </div>
           </div>
         </div>
+      </Portal>
+    </Show>
+
+    {/* Toast for export / backup results */}
+    <Show when={toast()}>
+      <Portal>
+        <div class="sidebar-toast md-typescale-body-medium">{toast()}</div>
       </Portal>
     </Show>
     </>

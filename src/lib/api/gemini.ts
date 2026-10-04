@@ -1,8 +1,11 @@
-import { GoogleGenAI, ThinkingLevel } from "@google/genai";
+import { GoogleGenAI, ThinkingLevel, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import type { GenerateContentConfig, Content, Part, Tool } from "@google/genai";
 import { getApiKey } from "../auth/apikey";
 import { isTauri, isMobile } from "../platform";
-import { LUMI_SYSTEM_INSTRUCTION } from "../auth/constants";
+import { SYSTEM_INSTRUCTION } from "../auth/constants";
+import { resolveModel, safetyOff, autoFallback, usableModelIds, modelLabel } from "../stores/settings";
+import { AVAILABLE_MODELS } from "./types";
+import { streamOpenAI, streamAnthropic, sendOpenAI, sendAnthropic } from "./providers";
 import type {
   GeminiContent,
   GeminiGenerationConfig,
@@ -172,15 +175,25 @@ function toSdkContents(contents: GeminiContent[]): Content[] {
  * Maps our GeminiGenerationConfig + systemInstruction + tools to
  * the SDK's GenerateContentConfig.
  */
+/** Options for a chat request. */
+export interface ChatOptions {
+  /** Use the given system instruction instead of talkdude's own persona (character chats). */
+  replaceBase?: boolean;
+}
+
+function systemText(systemInstruction: string | undefined, opts?: ChatOptions): string {
+  if (opts?.replaceBase && systemInstruction) return systemInstruction;
+  return systemInstruction ? SYSTEM_INSTRUCTION + "\n\n" + systemInstruction : SYSTEM_INSTRUCTION;
+}
+
 function toSdkConfig(
   generationConfig: GeminiGenerationConfig | undefined,
   systemInstruction: string | undefined,
   signal?: AbortSignal,
   tools?: GeminiTool[],
+  opts?: ChatOptions,
 ): GenerateContentConfig {
-  const sysText = systemInstruction
-    ? LUMI_SYSTEM_INSTRUCTION + "\n\n" + systemInstruction
-    : LUMI_SYSTEM_INSTRUCTION;
+  const sysText = systemText(systemInstruction, opts);
 
   const cfg: GenerateContentConfig = {
     systemInstruction: sysText,
@@ -209,6 +222,19 @@ function toSdkConfig(
   if (tools && tools.length > 0) {
     // GeminiTool is structurally identical to the SDK's Tool interface.
     cfg.tools = tools as unknown as Tool[];
+  }
+
+  // Content filter preference ("Gemini content filter" in Settings). When the user
+  // turns the filter off, every harm category is set to BLOCK_NONE. This is a
+  // documented Gemini API parameter; the model's own policies still apply.
+  if (safetyOff()) {
+    cfg.safetySettings = [
+      HarmCategory.HARM_CATEGORY_HARASSMENT,
+      HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+      HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+      HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+      HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY,
+    ].map((category) => ({ category, threshold: HarmBlockThreshold.BLOCK_NONE }));
   }
 
   return cfg;
@@ -335,6 +361,18 @@ function friendlyApiError(err: unknown): string {
   return String(err);
 }
 
+// === Automatic Fallback ===
+// talkdude itself has no message limit. Limits come from each provider's API
+// (free-tier rate limits / daily quota). When the chosen model answers with a
+// rate-limit or overload error before producing any text, the request is
+// retried on the next usable model so the conversation keeps going.
+
+function isRateLimitError(msg: string): boolean {
+  const m = msg.toLowerCase();
+  return m.includes("rate limit") || m.includes("quota") || m.includes("temporarily unavailable") ||
+    m.includes("is having problems") || m.includes("(429)") || m.includes("(503)");
+}
+
 export async function streamChat(
   model: string,
   contents: GeminiContent[],
@@ -343,7 +381,81 @@ export async function streamChat(
   callbacks: StreamCallbacks,
   signal?: AbortSignal,
   tools?: GeminiTool[],
+  opts?: ChatOptions,
 ): Promise<void> {
+  const hasGeminiKey = !!(await getApiKey());
+  const order = usableModelIds(AVAILABLE_MODELS.map((m) => m.id), hasGeminiKey);
+  // Start with the chosen model, then continue in configured order.
+  let candidates = [model, ...order.filter((m) => m !== model)];
+  // A Gemini model without a Gemini key can never answer; skip straight to a usable provider.
+  if (!hasGeminiKey && !model.includes("::") && order.length > 0) candidates = order;
+  const maxAttempts = autoFallback() ? Math.min(candidates.length, 6) : 1;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const current = candidates[attempt];
+    let produced = false;
+    let pendingError: string | null = null;
+    const isLast = attempt === maxAttempts - 1;
+
+    await streamChatOnce(
+      current,
+      contents,
+      // Thinking config / tools are Gemini-model specific; only keep them for the original model.
+      attempt === 0 ? generationConfig : undefined,
+      systemInstruction,
+      {
+        ...callbacks,
+        onText: (t) => { produced = true; callbacks.onText?.(t); },
+        onThinking: (t, sig) => { produced = true; callbacks.onThinking?.(t, sig); },
+        onError: (e) => { pendingError = e; },
+        onDone: () => { /* handled below */ },
+      },
+      signal,
+      attempt === 0 ? tools : undefined,
+      opts,
+    );
+
+    if (signal?.aborted) break;
+    const err: string | null = pendingError;
+    if (err === null) { callbacks.onDone?.(); return; }
+    const canRetry = !produced && !isLast && isRateLimitError(err);
+    if (!canRetry) {
+      callbacks.onError?.(err);
+      callbacks.onDone?.();
+      return;
+    }
+    callbacks.onText?.(`_${modelLabel(current)} hit its limit, continuing with ${modelLabel(candidates[attempt + 1])}._\n\n`);
+  }
+  callbacks.onDone?.();
+}
+
+async function streamChatOnce(
+  model: string,
+  contents: GeminiContent[],
+  generationConfig: GeminiGenerationConfig | undefined,
+  systemInstruction: string | undefined,
+  callbacks: StreamCallbacks,
+  signal?: AbortSignal,
+  tools?: GeminiTool[],
+  opts?: ChatOptions,
+): Promise<void> {
+  // Non-Gemini providers (OpenAI-compatible, Anthropic) are routed here.
+  const resolved = resolveModel(model);
+  if (resolved.provider) {
+    const sys = systemText(systemInstruction, opts);
+    if (resolved.provider.type === "anthropic") {
+      await streamAnthropic(resolved.provider, resolved.model, contents, sys, callbacks, signal);
+    } else {
+      await streamOpenAI(resolved.provider, resolved.model, contents, sys, callbacks, signal, generationConfig?.maxOutputTokens);
+    }
+    return;
+  }
+  if (model.includes("::") && !resolved.provider) {
+    callbacks.onError?.("The provider for this model was removed. Pick another model in Settings.");
+    callbacks.onDone?.();
+    return;
+  }
+
   let client: GoogleGenAI;
   try {
     client = await getClient();
@@ -355,7 +467,7 @@ export async function streamChat(
 
   const sdkContents = toSdkContents(contents);
   // abortSignal is passed through to fetch RequestInit.signal.
-  const sdkConfig = toSdkConfig(generationConfig, systemInstruction, signal, tools);
+  const sdkConfig = toSdkConfig(generationConfig, systemInstruction, signal, tools, opts);
 
   try {
     const stream = client.models.generateContentStream({
@@ -432,14 +544,24 @@ export async function sendChat(
   contents: GeminiContent[],
   generationConfig?: GeminiGenerationConfig,
   systemInstruction?: string,
+  opts?: ChatOptions,
 ): Promise<{
   parts: GeminiContentPart[];
   usage?: { promptTokens: number; outputTokens: number; totalTokens: number };
 }> {
+  const resolved = resolveModel(model);
+  if (resolved.provider) {
+    const sys = systemText(systemInstruction, opts);
+    const text = resolved.provider.type === "anthropic"
+      ? await sendAnthropic(resolved.provider, resolved.model, contents, sys, generationConfig?.maxOutputTokens)
+      : await sendOpenAI(resolved.provider, resolved.model, contents, sys, generationConfig?.maxOutputTokens);
+    return { parts: [{ text }] };
+  }
+
   const client = await getClient();
 
   const sdkContents = toSdkContents(contents);
-  const sdkConfig = toSdkConfig(generationConfig, systemInstruction);
+  const sdkConfig = toSdkConfig(generationConfig, systemInstruction, undefined, undefined, opts);
 
   const response = await client.models.generateContent({
     model,

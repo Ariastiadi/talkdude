@@ -1,9 +1,10 @@
 [package]
-name = "lumi-ai"
-version = "3.5.0"
-description = "A friendly, human-like AI chatbot powered by Gemini"
-authors = ["iamlooper"]
+name = "talkdude"
+version = "1.0.0"
+description = "talkdude - multi-provider AI chat companion"
+authors = ["Ariastiadi", "iamlooper (original Lumi AI)"]
 edition = "2021"
+license = "GPL-3.0-or-later"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -11,17 +12,26 @@ edition = "2021"
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "lumi_ai_lib"
+name = "talkdude_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# Rust crates are pinned to the same minor versions as the @tauri-apps NPM packages
+# (the Tauri CLI refuses to build when they differ). Cargo.lock is committed too.
 [build-dependencies]
-tauri-build = { version = "2.5.5", features = [] }
+tauri-build = { version = "~2.5.5", features = [] }
 
 [dependencies]
-tauri = { version = "2.10.2", features = [] }
-tauri-plugin-opener = "2.5.3"
-tauri-plugin-http = "2.5.7"
-tauri-plugin-fs = "2.5.1"
+tauri = { version = "~2.10.2", features = [] }
+tauri-plugin-opener = "~2.5.3"
+tauri-plugin-http = "~2.5.7"
+tauri-plugin-fs = "~2.5.1"
+# Keep Tauri's internal crates on the series that tauri 2.10 was released with;
+# newer tauri-runtime 2.12 is not source-compatible with tauri 2.10.
+tauri-runtime = "~2.10"
+tauri-runtime-wry = "~2.10"
+tauri-utils = "~2.8"
+tauri-macros = "~2.5"
+tauri-codegen = "~2.5"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 

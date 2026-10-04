@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Lumi AI",
-  "version": "3.5.0",
-  "identifier": "io.github.iamlooper.lumiai",
+  "productName": "talkdude",
+  "version": "1.0.0",
+  "identifier": "io.github.ariastiadi.talkdude",
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",

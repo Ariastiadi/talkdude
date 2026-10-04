@@ -3,7 +3,7 @@
   "configVersion": 0,
   "workspaces": {
     "": {
-      "name": "lumi-ai",
+      "name": "talkdude",
       "dependencies": {
         "@google/genai": "2.0.0",
         "@material/material-color-utilities": "0.4.0",
