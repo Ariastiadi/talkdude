@@ -2,6 +2,7 @@ import { createSignal } from "solid-js";
 import { getApiKey, setApiKey, clearApiKey, validateApiKey } from "../auth/apikey";
 import { db } from "../db";
 import { providers, providerUsable } from "./settings";
+import { downloadedLocal } from "../api/local";
 
 // Set once the user has skipped or finished the first-run key screen, so it
 // doesn't come back on every launch for people who only use other providers.
@@ -31,7 +32,7 @@ export async function initAuth(): Promise<void> {
     const key = await getApiKey();
     setApiKeySignal(key);
     const onboarded = (await db.settings.get(ONBOARDED_KEY).catch(() => undefined))?.value === true;
-    if (!key && !onboarded && !providers().some(providerUsable)) {
+    if (!key && !onboarded && !providers().some(providerUsable) && downloadedLocal().length === 0) {
       setIsOnboardingFlow(true);
       setApiKeyDialogOpen(true);
     }
