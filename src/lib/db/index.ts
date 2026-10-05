@@ -45,6 +45,14 @@ export interface Character {
   exampleDialogue: string;
   tags: string[];
   builtIn?: boolean;
+  /** A built-in character the user has edited (stored under the same id). */
+  customized?: boolean;
+  /** Quick personality picks from the creator (e.g. "Cheerful", "Witty"). */
+  traits?: string[];
+  /** What the character is to the user (e.g. "Best friend", "Mentor"). */
+  relation?: string;
+  /** How the character writes (e.g. "Casual", "Short replies"). */
+  style?: string[];
   createdAt: number;
   updatedAt: number;
 }
