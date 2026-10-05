@@ -1,8 +1,9 @@
 import { GoogleGenAI, ThinkingLevel, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import type { GenerateContentConfig, Content, Part, Tool } from "@google/genai";
 import { getApiKey } from "../auth/apikey";
-import { isTauri, isMobile } from "../platform";
 import { SYSTEM_INSTRUCTION } from "../auth/constants";
+import { streamLocal, sendLocal } from "./local";
+import { installMobileFetch } from "../platform";
 import { resolveModel, safetyOff, autoFallback, usableModelIds, modelLabel } from "../stores/settings";
 import { AVAILABLE_MODELS } from "./types";
 import { streamOpenAI, streamAnthropic, sendOpenAI, sendAnthropic } from "./providers";
@@ -26,23 +27,9 @@ import type {
 // works at the network layer without IPC. Mobile requires the plugin because
 // the WebView sandbox blocks external HTTPS.
 
-let _fetchPatched = false;
-
 async function ensureFetchPatched(): Promise<void> {
-  if (_fetchPatched) return;
-  _fetchPatched = true; // set first to prevent re-entry
-  if (!isTauri()) return;
-  // Only patch on mobile; desktop deadlocks (see block comment).
-  if (!isMobile()) return;
-  try {
-    const { fetch: tauriFetch } = await import("@tauri-apps/plugin-http");
-    // This replaces globalThis.fetch for the entire app, not only SDK calls.
-    // The cast bridges the TypeScript declaration gap between the plugin and lib.dom.d.ts.
-    globalThis.fetch = tauriFetch as unknown as typeof globalThis.fetch;
-  } catch {
-    // Plugin unavailable (e.g. web-only build target); fall back to browser fetch.
-    _fetchPatched = false;
-  }
+  // Routes external requests through plugin-http on mobile only (see platform.ts).
+  await installMobileFetch();
 }
 
 // === SDK Client Management: One Instance Per API Key ===
@@ -443,7 +430,9 @@ async function streamChatOnce(
   const resolved = resolveModel(model);
   if (resolved.provider) {
     const sys = systemText(systemInstruction, opts);
-    if (resolved.provider.type === "anthropic") {
+    if (resolved.provider.type === "local") {
+      await streamLocal(resolved.model, contents, sys, callbacks, signal, generationConfig?.maxOutputTokens);
+    } else if (resolved.provider.type === "anthropic") {
       await streamAnthropic(resolved.provider, resolved.model, contents, sys, callbacks, signal);
     } else {
       await streamOpenAI(resolved.provider, resolved.model, contents, sys, callbacks, signal, generationConfig?.maxOutputTokens);
@@ -552,7 +541,9 @@ export async function sendChat(
   const resolved = resolveModel(model);
   if (resolved.provider) {
     const sys = systemText(systemInstruction, opts);
-    const text = resolved.provider.type === "anthropic"
+    const text = resolved.provider.type === "local"
+      ? await sendLocal(resolved.model, contents, sys, generationConfig?.maxOutputTokens)
+      : resolved.provider.type === "anthropic"
       ? await sendAnthropic(resolved.provider, resolved.model, contents, sys, generationConfig?.maxOutputTokens)
       : await sendOpenAI(resolved.provider, resolved.model, contents, sys, generationConfig?.maxOutputTokens);
     return { parts: [{ text }] };
