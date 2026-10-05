@@ -1,4 +1,5 @@
-use tauri::Manager;
+mod llm;
+mod llm_core;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -37,7 +38,17 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![])
+        .invoke_handler(tauri::generate_handler![
+            llm::llm_list,
+            llm::llm_delete,
+            llm::llm_download,
+            llm::llm_cancel_download,
+            llm::llm_import_chunk,
+            llm::llm_load,
+            llm::llm_chat,
+            llm::llm_stop,
+            llm::llm_info,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
