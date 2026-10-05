@@ -46,9 +46,13 @@ import {
   addMemory,
   removeMemory,
 } from "../lib/stores/chat";
-import { getCharacter, MAX_MEMORIES } from "../lib/stores/characters";
+import { getCharacter, MAX_MEMORIES, showCharacter } from "../lib/stores/characters";
 import { CharacterAvatar } from "./CharactersView";
-import { providers, isGeminiModelId, makeModelId, modelLabel } from "../lib/stores/settings";
+import { providers, isGeminiModelId, makeModelId, modelLabel, openSettings, providerUsable, DEVICE_PROVIDER_ID } from "../lib/stores/settings";
+import { apiKey } from "../lib/stores/auth";
+import { hasUsableAI } from "../lib/stores/ai";
+import { downloadedLocal, downloadProgress, loadingLocal, localModelInfo, DEFAULT_LOCAL_MODEL } from "../lib/api/local";
+import AiSetupCard from "./AiSetup";
 import type { Message, MessagePart } from "../lib/db";
 import { AVAILABLE_MODELS, modelSupportsCodeExecution, modelSupportsUrlContext } from "../lib/api/types";
 import { renderMarkdown } from "../lib/markdown";
@@ -282,12 +286,17 @@ export default function ChatView() {
   };
 
   const currentModelName = () => {
-    return AVAILABLE_MODELS.find((m) => m.id === selectedModel())?.name ?? modelLabel(selectedModel());
+    const id = selectedModel();
+    const gem = AVAILABLE_MODELS.find((m) => m.id === id);
+    if (gem) return apiKey() ? gem.name : "No AI selected";
+    if (id.startsWith(DEVICE_PROVIDER_ID + "::")) return `${localModelInfo(id.slice(DEVICE_PROVIDER_ID.length + 2))?.name ?? "On-device"} · on-device`;
+    return modelLabel(id);
   };
 
   // Gemini-only features (Files API attachments, Google Search, URL Context,
   // Code Execution) are hidden when another provider's model is selected.
-  const isGemini = () => isGeminiModelId(selectedModel());
+  const isGemini = () => isGeminiModelId(selectedModel()) && !!apiKey();
+  const setupNeeded = () => !hasUsableAI() || downloadProgress()[DEFAULT_LOCAL_MODEL] !== undefined;
 
   // === Edit Mode Helpers ===
 
@@ -784,8 +793,11 @@ export default function ChatView() {
             {greeting}
           </h1>
           <p class="welcome-subtitle">{subtitle}</p>
+          <Show when={setupNeeded()}>
+            <AiSetupCard />
+          </Show>
           {/* Suggestion chips inside welcome on mobile */}
-          <div class="welcome-suggestions">
+          <div class="welcome-suggestions" classList={{ hidden: setupNeeded() }}>
             <For each={suggestions}>
               {([icon, label]) => (
                 <button class="suggestion-chip" onClick={() => handleSuggestionClick(label)}>
@@ -803,7 +815,7 @@ export default function ChatView() {
   // === Suggestion Chips Row ===
 
   const SuggestionRow = () => (
-    <div class="suggestion-row">
+    <div class="suggestion-row" classList={{ hidden: setupNeeded() }}>
       <For each={suggestions}>
         {([icon, label]) => (
           <button class="suggestion-chip" onClick={() => handleSuggestionClick(label)}>
@@ -812,6 +824,77 @@ export default function ChatView() {
           </button>
         )}
       </For>
+    </div>
+  );
+
+  // === Model Picker (top bar) ===
+
+  const ModelOption = (props: { id: string; label: string; sub?: string }) => (
+    <button
+      type="button"
+      class={`model-option ${props.id === selectedModel() ? "selected" : ""}`}
+      onClick={() => { chooseModel(props.id); setModelMenuOpen(false); }}
+    >
+      <div class="model-option-text">
+        <div class="md-typescale-body-medium">{props.label}</div>
+        <Show when={props.sub}><div class="md-typescale-body-small model-option-sub">{props.sub}</div></Show>
+      </div>
+      <Show when={props.id === selectedModel()}>
+        <md-icon class="model-check">check_circle</md-icon>
+      </Show>
+    </button>
+  );
+
+  const ModelPicker = () => (
+    <div class="model-anchor">
+      <button
+        type="button"
+        class="model-chip"
+        onClick={() => setModelMenuOpen(!modelMenuOpen())}
+        disabled={isViewingActiveStream()}
+        aria-label="Choose model"
+      >
+        <span>{loadingLocal() ? "Loading model…" : currentModelName()}</span>
+        <md-icon>expand_more</md-icon>
+      </button>
+      <Show when={modelMenuOpen()}>
+        <div class="model-popup" onClick={(e) => e.stopPropagation()}>
+          <div class="popup-header md-typescale-title-small">On-device · free, offline</div>
+          <For each={downloadedLocal()}>
+            {(k) => <ModelOption id={makeModelId(DEVICE_PROVIDER_ID, k)} label={localModelInfo(k)?.name ?? k} />}
+          </For>
+          <Show when={downloadedLocal().length === 0}>
+            <button type="button" class="model-option model-option-link" onClick={() => { setModelMenuOpen(false); openSettings("device"); }}>
+              <div class="model-option-text"><div class="md-typescale-body-medium">Get a free on-device model</div><div class="md-typescale-body-small model-option-sub">No key, no limits</div></div>
+              <md-icon>download</md-icon>
+            </button>
+          </Show>
+
+          <div class="popup-header md-typescale-title-small">Gemini</div>
+          <Show when={apiKey()} fallback={
+            <button type="button" class="model-option model-option-link" onClick={() => { setModelMenuOpen(false); openSettings("gemini"); }}>
+              <div class="model-option-text"><div class="md-typescale-body-medium">Add a free Gemini key</div><div class="md-typescale-body-small model-option-sub">Smartest answers, files and web search</div></div>
+              <md-icon>key</md-icon>
+            </button>
+          }>
+            <For each={AVAILABLE_MODELS}>{(model) => <ModelOption id={model.id} label={model.name} />}</For>
+          </Show>
+
+          <For each={providers()}>
+            {(provider) => (
+              <Show when={provider.models.length > 0 && providerUsable(provider)}>
+                <div class="popup-header md-typescale-title-small">{provider.name}</div>
+                <For each={provider.models}>{(m) => <ModelOption id={makeModelId(provider.id, m)} label={m} />}</For>
+              </Show>
+            )}
+          </For>
+          <button type="button" class="model-option model-option-link model-manage" onClick={() => { setModelMenuOpen(false); openSettings(providers().length ? "providers" : "device"); }}>
+            <div class="model-option-text"><div class="md-typescale-body-medium">Manage models &amp; providers</div></div>
+            <md-icon>tune</md-icon>
+          </button>
+        </div>
+        <div class="popup-backdrop" onClick={() => setModelMenuOpen(false)} />
+      </Show>
     </div>
   );
 
@@ -1084,7 +1167,7 @@ export default function ChatView() {
           </div>
 
           {/* Thinking toggle (only for models that support it) */}
-          <Show when={modelSupportsThinking(selectedModel())}>
+          <Show when={modelSupportsThinking(selectedModel()) && (isGemini() || !isGeminiModelId(selectedModel()))}>
             <div class="toolbar-menu-anchor">
               <button
                 type="button"
@@ -1141,76 +1224,6 @@ export default function ChatView() {
 
           <div class="toolbar-spacer" />
 
-          {/* Model selector */}
-          <div class="toolbar-menu-anchor">
-            <button
-              type="button"
-              class="model-selector-btn"
-              onClick={() => setModelMenuOpen(!modelMenuOpen())}
-              disabled={isViewingActiveStream()}
-            >
-              <span class="md-typescale-label-large">{currentModelName()}</span>
-              <md-icon>expand_more</md-icon>
-            </button>
-            <Show when={modelMenuOpen()}>
-              <div class="toolbar-popup model-popup" onClick={(e) => e.stopPropagation()}>
-                <div class="popup-header md-typescale-title-small">Gemini</div>
-                <For each={AVAILABLE_MODELS}>
-                  {(model) => (
-                    <button
-                      type="button"
-                      class={`model-option ${model.id === selectedModel() ? "selected" : ""}`}
-                      onClick={() => {
-                        chooseModel(model.id);
-                        setModelMenuOpen(false);
-                      }}
-                    >
-                      <div>
-                        <div class="md-typescale-body-medium">{model.name}</div>
-                      </div>
-                      <Show when={model.id === selectedModel()}>
-                        <md-icon class="model-check">check_circle</md-icon>
-                      </Show>
-                    </button>
-                  )}
-                </For>
-                <For each={providers()}>
-                  {(provider) => (
-                    <Show when={provider.models.length > 0}>
-                      <div class="popup-header md-typescale-title-small">{provider.name}</div>
-                      <For each={provider.models}>
-                        {(m) => {
-                          const id = makeModelId(provider.id, m);
-                          return (
-                            <button
-                              type="button"
-                              class={`model-option ${id === selectedModel() ? "selected" : ""}`}
-                              onClick={() => {
-                                chooseModel(id);
-                                setModelMenuOpen(false);
-                              }}
-                            >
-                              <div>
-                                <div class="md-typescale-body-medium">{m}</div>
-                              </div>
-                              <Show when={id === selectedModel()}>
-                                <md-icon class="model-check">check_circle</md-icon>
-                              </Show>
-                            </button>
-                          );
-                        }}
-                      </For>
-                    </Show>
-                  )}
-                </For>
-                <Show when={providers().length === 0}>
-                  <div class="model-popup-hint md-typescale-body-small">Add more providers (OpenAI, Claude, Groq, …) in Settings.</div>
-                </Show>
-              </div>
-              <div class="popup-backdrop" onClick={() => setModelMenuOpen(false)} />
-            </Show>
-          </div>
-
           {/* Send / Stop button */}
           <md-filled-tonal-icon-button
             type="button"
@@ -1233,11 +1246,18 @@ export default function ChatView() {
           <md-icon>{sidebarOpen() ? "menu_open" : "menu"}</md-icon>
         </md-icon-button>
         <Show when={activeCharacter()}>
-          {(ch) => <CharacterAvatar avatar={ch().avatar} size={28} />}
+          {(ch) => (
+            <button type="button" class="topbar-avatar-btn" aria-label={`About ${ch().name}`} onClick={() => showCharacter(ch().id)}>
+              <CharacterAvatar avatar={ch().avatar} size={32} />
+            </button>
+          )}
         </Show>
-        <span class="md-typescale-title-medium chat-topbar-title">
-          {activeConversation()?.title || "talkdude"}
-        </span>
+        <div class="topbar-titles">
+          <span class="md-typescale-title-medium chat-topbar-title">
+            {activeCharacter()?.name ?? (activeConversation()?.title || "talkdude")}
+          </span>
+          <ModelPicker />
+        </div>
         <div class="topbar-spacer" />
         <Show when={activeConversationId()}>
           <md-icon-button type="button" aria-label="Pinned memories" onClick={() => setMemoryOpen(!memoryOpen())}>
@@ -1373,11 +1393,14 @@ export default function ChatView() {
             </div>
           </Show>
 
-          <Show when={chatError()}>
+          <Show when={chatError() && !setupNeeded()}>
             <div class="chat-error md-typescale-body-medium">
               <md-icon class="error-icon">error_outline</md-icon>
               {chatError()}
             </div>
+          </Show>
+          <Show when={setupNeeded()}>
+            <AiSetupCard compact />
           </Show>
         </div>
 
