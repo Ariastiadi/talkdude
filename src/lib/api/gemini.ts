@@ -1,7 +1,7 @@
 import { GoogleGenAI, ThinkingLevel, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import type { GenerateContentConfig, Content, Part, Tool } from "@google/genai";
 import { getApiKey } from "../auth/apikey";
-import { SYSTEM_INSTRUCTION } from "../auth/constants";
+import { SYSTEM_INSTRUCTION, LOCAL_SYSTEM_INSTRUCTION } from "../auth/constants";
 import { streamLocal, sendLocal } from "./local";
 import { installMobileFetch } from "../platform";
 import { resolveModel, safetyOff, autoFallback, usableModelIds, modelLabel } from "../stores/settings";
@@ -166,6 +166,11 @@ function toSdkContents(contents: GeminiContent[]): Content[] {
 export interface ChatOptions {
   /** Use the given system instruction instead of talkdude's own persona (character chats). */
   replaceBase?: boolean;
+}
+
+function localSystemText(systemInstruction: string | undefined, opts?: ChatOptions): string {
+  if (opts?.replaceBase && systemInstruction) return systemInstruction;
+  return systemInstruction ? LOCAL_SYSTEM_INSTRUCTION + "\n\n" + systemInstruction : LOCAL_SYSTEM_INSTRUCTION;
 }
 
 function systemText(systemInstruction: string | undefined, opts?: ChatOptions): string {
@@ -431,7 +436,7 @@ async function streamChatOnce(
   if (resolved.provider) {
     const sys = systemText(systemInstruction, opts);
     if (resolved.provider.type === "local") {
-      await streamLocal(resolved.model, contents, sys, callbacks, signal, generationConfig?.maxOutputTokens);
+      await streamLocal(resolved.model, contents, localSystemText(systemInstruction, opts), callbacks, signal, generationConfig?.maxOutputTokens);
     } else if (resolved.provider.type === "anthropic") {
       await streamAnthropic(resolved.provider, resolved.model, contents, sys, callbacks, signal);
     } else {
@@ -542,7 +547,7 @@ export async function sendChat(
   if (resolved.provider) {
     const sys = systemText(systemInstruction, opts);
     const text = resolved.provider.type === "local"
-      ? await sendLocal(resolved.model, contents, sys, generationConfig?.maxOutputTokens)
+      ? await sendLocal(resolved.model, contents, localSystemText(systemInstruction, opts), generationConfig?.maxOutputTokens)
       : resolved.provider.type === "anthropic"
       ? await sendAnthropic(resolved.provider, resolved.model, contents, sys, generationConfig?.maxOutputTokens)
       : await sendOpenAI(resolved.provider, resolved.model, contents, sys, generationConfig?.maxOutputTokens);
