@@ -1,16 +1,17 @@
 /**
- * On-device AI: runs a small open model (GGUF) directly inside the app with
- * llama.cpp compiled to WebAssembly (wllama). No API key, no account, no
- * network after the one-time model download, and no usage limits.
+ * On-device AI: runs a small open model (GGUF) directly on the device.
+ * No API key, no account, no network after the one-time model download, and
+ * no usage limits.
  *
- * The model files are stored in the app's private storage (OPFS) and loaded
- * into a Web Worker, so the UI keeps running while the model thinks.
+ * - In the app (Android, Windows, Linux): native llama.cpp compiled into
+ *   talkdude (src-tauri/src/llm.rs). Fast, multi-threaded, uses CPU SIMD.
+ * - In a plain browser: llama.cpp as WebAssembly (wllama), stored in OPFS.
  */
 import { createSignal } from "solid-js";
 import type { Wllama, ModelManager } from "@wllama/wllama";
 import type { GeminiContent } from "./types";
 import type { StreamCallbacks } from "./gemini";
-import { isMobile, installMobileFetch } from "../platform";
+import { isMobile, isTauri, installMobileFetch } from "../platform";
 
 export interface LocalModel {
   key: string;
@@ -28,7 +29,7 @@ export const LOCAL_MODELS: LocalModel[] = [
   {
     key: "qwen2.5-0.5b",
     name: "Qwen 2.5 0.5B",
-    note: "Smallest and fastest. Good for casual chat on any phone.",
+    note: "Smallest and fastest, but simple answers. For older phones.",
     url: "https://huggingface.co/bartowski/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf",
     size: 397_808_192,
     ctx: 4096,
@@ -44,14 +45,24 @@ export const LOCAL_MODELS: LocalModel[] = [
   {
     key: "qwen2.5-1.5b",
     name: "Qwen 2.5 1.5B",
-    note: "Smartest of the three. Best on PCs and recent phones (6 GB+ RAM).",
+    note: "Recommended. Much better answers; runs well on most phones from the last 5 years.",
     url: "https://huggingface.co/bartowski/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
     size: 986_048_768,
     ctx: 4096,
   },
 ];
 
-export const DEFAULT_LOCAL_MODEL = LOCAL_MODELS[0].key;
+/** Native engine is fast enough for the smarter 1.5B model; the browser engine is not. */
+export const DEFAULT_LOCAL_MODEL = isTauri() ? "qwen2.5-1.5b" : LOCAL_MODELS[0].key;
+
+/** True when the fast native engine (inside the app) is used. */
+export function nativeEngine(): boolean {
+  return isTauri();
+}
+
+function fileOf(info: LocalModel): string {
+  return info.url.split("/").pop()!;
+}
 
 export function localModelInfo(key: string): LocalModel | undefined {
   return LOCAL_MODELS.find((m) => m.key === key);
@@ -208,12 +219,121 @@ async function ensureEngine(onProgress?: (loaded: number) => void, signal?: Abor
 }
 
 export function localSupported(): boolean {
+  if (nativeEngine()) return true;
   return typeof WebAssembly === "object" && typeof navigator !== "undefined" && !!navigator.storage?.getDirectory;
+}
+
+// === Native engine (Tauri) ===
+
+async function tauriCore() {
+  return await import("@tauri-apps/api/core");
+}
+
+let nativeLoaded: string | null = null;
+
+async function nativeFiles(): Promise<{ file: string; size: number }[]> {
+  const { invoke } = await tauriCore();
+  return await invoke<{ file: string; size: number }[]>("llm_list");
+}
+
+/** Models downloaded by the older WebAssembly engine (v1.1) are moved over instead of downloaded again. */
+async function migrateWebModels(have: Set<string>): Promise<void> {
+  if (!navigator.storage?.getDirectory) return;
+  let mm: ModelManager;
+  try { mm = await getManager(); } catch { return; }
+  const web = await mm.getModels().catch(() => []);
+  const { invoke } = await tauriCore();
+  for (const info of LOCAL_MODELS) {
+    if (have.has(info.key)) continue;
+    const m = web.find((x) => x.url === info.url);
+    if (!m) continue;
+    const blob = (await m.open())[0];
+    if (!blob || blob.size !== info.size) continue;
+    setDownloadProgress((p) => ({ ...p, [info.key]: 0 }));
+    try {
+      const CHUNK = 8 * 1024 * 1024;
+      for (let off = 0; off < blob.size; off += CHUNK) {
+        const part = new Uint8Array(await blob.slice(off, off + CHUNK).arrayBuffer());
+        const headers: Record<string, string> = { "x-file": fileOf(info) };
+        if (off === 0) headers["x-first"] = "1";
+        if (off + CHUNK >= blob.size) headers["x-last"] = "1";
+        await invoke("llm_import_chunk", part, { headers });
+        setDownloadProgress((p) => ({ ...p, [info.key]: Math.min(1, (off + CHUNK) / blob.size) }));
+      }
+      await m.remove().catch(() => {});
+      have.add(info.key);
+    } catch (e) {
+      console.warn("[on-device] could not move model", e);
+    } finally {
+      setDownloadProgress((p) => { const n = { ...p }; delete n[info.key]; return n; });
+    }
+  }
+}
+
+async function refreshNative(): Promise<void> {
+  const files = await nativeFiles();
+  const have = new Set(LOCAL_MODELS.filter((m) => files.some((f) => f.file === fileOf(m) && f.size === m.size)).map((m) => m.key));
+  setDownloadedLocal(LOCAL_MODELS.filter((m) => have.has(m.key)).map((m) => m.key));
+  // Move v1.1 downloads over in the background.
+  void migrateWebModels(have).then(() => setDownloadedLocal(LOCAL_MODELS.filter((m) => have.has(m.key)).map((m) => m.key)));
+}
+
+async function downloadNative(info: LocalModel): Promise<void> {
+  const { invoke, Channel } = await tauriCore();
+  const ch = new Channel<number>();
+  ch.onmessage = (written) => setDownloadProgress((p) => ({ ...p, [info.key]: Math.min(1, written / info.size) }));
+  try {
+    await invoke("llm_download", { url: info.url, file: fileOf(info), onProgress: ch });
+  } catch (e) {
+    const msg = String(e);
+    if (/cancel/i.test(msg)) throw new Error("Download cancelled.");
+    if (/storage/i.test(msg)) throw new Error(msg);
+    throw new Error(`Download failed. Check your internet connection and try again. (${msg})`);
+  }
+}
+
+async function streamNative(
+  info: LocalModel,
+  contents: GeminiContent[],
+  systemInstruction: string,
+  callbacks: StreamCallbacks,
+  signal: AbortSignal | undefined,
+  maxOut: number,
+): Promise<void> {
+  const { invoke, Channel } = await tauriCore();
+  const nCtx = isMobile() ? 2048 : 4096;
+  if (nativeLoaded !== info.key) {
+    setLoadingLocal(info.key);
+    try {
+      await invoke("llm_load", { file: fileOf(info), nCtx });
+      nativeLoaded = info.key;
+    } finally {
+      setLoadingLocal(null);
+    }
+  }
+  if (signal?.aborted) return;
+  const onAbort = () => { void invoke("llm_stop"); };
+  signal?.addEventListener("abort", onAbort);
+  const ch = new Channel<string>();
+  ch.onmessage = (t) => { if (!signal?.aborted && t) callbacks.onText?.(t); };
+  try {
+    await invoke("llm_chat", {
+      messages: toLocalMessages(contents, systemInstruction, nCtx, maxOut),
+      params: { maxTokens: maxOut, temperature: 0.7, topP: 0.9, topK: 40, repeatPenalty: 1.1 },
+      onToken: ch,
+    });
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+  }
 }
 
 /** Re-reads which models are on this device. Call once at startup. */
 export async function refreshLocalModels(): Promise<void> {
   if (!localSupported()) return;
+  if (nativeEngine()) {
+    try { await refreshNative(); } catch (e) { console.warn("[on-device] could not list models", e); }
+    return;
+  }
   try {
     const mm = await getManager();
     const models = await mm.getModels();
@@ -231,6 +351,16 @@ export async function downloadLocalModel(key: string): Promise<void> {
   const ac = new AbortController();
   downloadAborts.set(key, ac);
   setDownloadProgress((p) => ({ ...p, [key]: 0 }));
+  if (nativeEngine()) {
+    try {
+      await downloadNative(info);
+      await refreshNative();
+    } finally {
+      downloadAborts.delete(key);
+      setDownloadProgress((p) => { const n = { ...p }; delete n[key]; return n; });
+    }
+    return;
+  }
   try {
     // Ask the system to keep the files even when storage gets low.
     try { await navigator.storage?.persist?.(); } catch { /* ignore */ }
@@ -260,12 +390,20 @@ export async function downloadLocalModel(key: string): Promise<void> {
 }
 
 export function cancelLocalDownload(key: string): void {
+  if (nativeEngine()) { void tauriCore().then(({ invoke }) => invoke("llm_cancel_download")); return; }
   downloadAborts.get(key)?.abort();
 }
 
 export async function deleteLocalModel(key: string): Promise<void> {
   const info = localModelInfo(key);
   if (!info) return;
+  if (nativeEngine()) {
+    const { invoke } = await tauriCore();
+    await invoke("llm_delete", { file: fileOf(info) });
+    if (nativeLoaded === key) nativeLoaded = null;
+    await refreshNative();
+    return;
+  }
   if (loadedKey === key && engine) {
     try { await engine.exit(); } catch { /* ignore */ }
     engine = null;
@@ -386,6 +524,22 @@ export async function streamLocal(
   maxTokens?: number,
 ): Promise<void> {
   const run = async () => {
+    if (nativeEngine()) {
+      try {
+        const info = localModelInfo(key);
+        if (!info) throw new Error("This on-device model is not available.");
+        if (!downloadedLocal().includes(key)) throw new Error(`${info.name} is not downloaded yet. Download it in Settings → On-device.`);
+        await streamNative(info, contents, systemInstruction, callbacks, signal, maxTokens ?? 768);
+      } catch (e) {
+        if (!signal?.aborted) {
+          nativeLoaded = null;
+          callbacks.onError?.(`The on-device model stopped: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      } finally {
+        callbacks.onDone?.();
+      }
+      return;
+    }
     try {
       const w = await ensureLoaded(key);
       if (signal?.aborted) return;
