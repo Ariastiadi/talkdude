@@ -124,7 +124,7 @@ export interface ThoughtSignatureEntry {
 
 // === Database ===
 
-class LumiDB extends Dexie {
+class TalkdudeDB extends Dexie {
   conversations!: EntityTable<Conversation, "id">;
   messages!: EntityTable<Message, "id">;
   settings!: EntityTable<AppSettings, "key">;
@@ -134,6 +134,7 @@ class LumiDB extends Dexie {
   characters!: EntityTable<Character, "id">;
 
   constructor() {
+    // Database name kept from Lumi AI so existing chats survive updates.
     super("LumiAI");
 
     this.version(1).stores({
@@ -221,7 +222,7 @@ class LumiDB extends Dexie {
   }
 }
 
-export const db = new LumiDB();
+export const db = new TalkdudeDB();
 
 /**
  * Pre-opens the database, handling schema conflicts gracefully.
