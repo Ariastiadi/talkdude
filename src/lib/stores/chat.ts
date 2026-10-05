@@ -13,6 +13,7 @@ import type {
 import { DEFAULT_MODEL_ID, TITLE_MODEL, modelSupportsCodeExecution, modelSupportsUrlContext } from "../api/types";
 import { getActiveSystemInstruction } from "./custom-instructions";
 import { isGeminiModelId, isDeviceModelId, persistSelectedModel, loadSelectedModel } from "./settings";
+import { buildLearnedPrompt, learnFromMessage } from "./learning";
 import {
   getCharacter, buildCharacterPrompt, buildPersonaPrompt, buildMemoryPrompt, fillNames, MAX_MEMORIES,
 } from "./characters";
@@ -1460,8 +1461,17 @@ async function startStream(
         }));
 
         // Title generation on first exchange (character chats keep the character's name)
-        if (turnCount <= 1 && fullText && !conversations.find((c) => c.id === convId)?.characterId) {
+        const isCharacterChat = !!conversations.find((c) => c.id === convId)?.characterId;
+        if (turnCount <= 1 && fullText && !isCharacterChat) {
           generateTitle(userText, fullText, convId);
+        }
+        // Learn durable facts about the user from normal chats (best-effort, in the background).
+        if (fullText && !isCharacterChat) {
+          void learnFromMessage(convId, userText, async (prompt) => {
+            const learnModel = isGeminiModelId(model) ? TITLE_MODEL : model;
+            const r = await sendChat(learnModel, [{ role: "user", parts: [{ text: prompt }] }], { maxOutputTokens: 160 });
+            return r.parts.filter((p) => p.text && !p.thought).map((p) => p.text!).join("").trim();
+          });
         }
       }
 
@@ -1485,7 +1495,7 @@ async function startStream(
   };
 
   try {
-    const sys = buildSystemFor(convId);
+    const sys = buildSystemFor(convId, userText);
     await streamChat(model, contents, generationConfig, sys.text, callbacks, controller.signal, tools, { replaceBase: sys.replaceBase });
   } catch (err) {
     // Network error: streamChat threw before callbacks fired.
@@ -1592,12 +1602,13 @@ export async function recoverSession(conversationId: string): Promise<void> {
 const swipeStash = new Map<string, MessagePart[][]>();
 
 /** Builds the system instruction for a conversation (character, persona, memories, custom instructions). */
-function buildSystemFor(convId: string): { text: string | undefined; replaceBase: boolean } {
+function buildSystemFor(convId: string, userText = ""): { text: string | undefined; replaceBase: boolean } {
   const conv = conversations.find((c) => c.id === convId);
   const character = getCharacter(conv?.characterId);
   const blocks = [
     character ? buildCharacterPrompt(character) : undefined,
     buildPersonaPrompt(),
+    buildLearnedPrompt(userText, isDeviceModelId(selectedModel()) ? 6 : 12),
     buildMemoryPrompt(conv?.memories),
     getActiveSystemInstruction(),
   ].filter((b): b is string => !!b && b.trim().length > 0);

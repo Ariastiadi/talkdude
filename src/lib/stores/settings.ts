@@ -67,7 +67,7 @@ const [settingsDialogOpen, setSettingsDialogOpen] = createSignal(false);
 /** When a model hits a rate limit / quota, continue with the next usable model. */
 const [autoFallback, setAutoFallbackSignal] = createSignal(true);
 
-export type SettingsTab = "device" | "gemini" | "providers" | "persona" | "appearance";
+export type SettingsTab = "device" | "gemini" | "providers" | "persona" | "memory" | "appearance";
 const [settingsTab, setSettingsTab] = createSignal<SettingsTab>("device");
 
 export { providers, theme, safetyOff, settingsDialogOpen, setSettingsDialogOpen, autoFallback, settingsTab, setSettingsTab };
