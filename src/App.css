@@ -71,8 +71,8 @@
     position: fixed;
     inset: 0;
     z-index: 99;
-    background: var(--md-sys-color-scrim);
-    opacity: 0.32;
+    background: #000;
+    opacity: 0.6;
     animation: fade-in var(--motion-duration-short) var(--motion-easing-emphasized-decelerate);
   }
 }
@@ -80,12 +80,11 @@
 @media (max-width: 599px) {
   .sidebar-container,
   .sidebar-container.open {
-    width: 85vw;
-    max-width: 300px;
+    width: min(86vw, 320px);
   }
 }
 
 @keyframes fade-in {
   from { opacity: 0; }
-  to { opacity: 0.32; }
+  to { opacity: 0.6; }
 }
