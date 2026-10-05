@@ -40,7 +40,7 @@ export default function LoginScreen() {
       <div class="onboard">
         <div class="onboard-head">
           <div class="login-logo">
-            <div class="login-icon lumi-logo" />
+            <div class="login-icon td-logo" />
           </div>
           <h1 class="login-title brand-name">talkdude</h1>
           <p class="md-typescale-body-large login-subtitle">

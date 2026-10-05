@@ -230,7 +230,7 @@ export default function Sidebar() {
             <Show when={isConvStreaming()} fallback={
               <Show when={!conv.pinned && getCharacter(conv.characterId)} fallback={
                 <md-icon class="conv-icon">
-                  {conv.pinned ? "push_pin" : "chat_bubble_outline"}
+                  {conv.pinned ? "push_pin" : "chat_bubble"}
                 </md-icon>
               }>
                 {(ch) => <CharacterAvatar avatar={ch().avatar} size={22} class="conv-icon" />}
@@ -310,7 +310,7 @@ export default function Sidebar() {
       <Show when={isSelectMode()} fallback={
         <div class="sidebar-header">
           <div class="sidebar-brand">
-            <div class="brand-icon lumi-logo" />
+            <div class="brand-icon td-logo" />
             <span class="md-typescale-title-medium brand-name">talkdude</span>
           </div>
           <md-icon-button class="sidebar-close" type="button" aria-label="Close menu" onClick={() => setSidebarOpen(false)}>
@@ -448,7 +448,7 @@ export default function Sidebar() {
       <Portal>
         <div class="confirm-dialog-backdrop" onClick={() => setDeleteConfirmId(null)}>
           <div class="confirm-dialog" onClick={(e) => e.stopPropagation()}>
-            <md-icon class="confirm-dialog-icon confirm-dialog-icon-error">delete_outline</md-icon>
+            <md-icon class="confirm-dialog-icon confirm-dialog-icon-error">delete</md-icon>
             <h2 class="md-typescale-headline-small confirm-dialog-title">Delete chat?</h2>
             <p class="md-typescale-body-medium confirm-dialog-body">
               This will permanently delete this conversation and all its messages. This action cannot be undone.
@@ -486,7 +486,7 @@ export default function Sidebar() {
       <Portal>
         <div class="confirm-dialog-backdrop" onClick={() => setDeleteSelectedConfirm(false)}>
           <div class="confirm-dialog" onClick={(e) => e.stopPropagation()}>
-            <md-icon class="confirm-dialog-icon confirm-dialog-icon-error">delete_outline</md-icon>
+            <md-icon class="confirm-dialog-icon confirm-dialog-icon-error">delete</md-icon>
             <h2 class="md-typescale-headline-small confirm-dialog-title">Delete {selectedIds().size} chats?</h2>
             <p class="md-typescale-body-medium confirm-dialog-body">
               This will permanently delete the selected conversations and all their messages. This action cannot be undone.
@@ -536,7 +536,7 @@ export default function Sidebar() {
         <div class="confirm-dialog-backdrop" onClick={() => setAboutOpen(false)}>
           <div class="confirm-dialog about-dialog" onClick={(e) => e.stopPropagation()}>
             <div class="about-logo-container">
-              <div class="about-logo lumi-logo" />
+              <div class="about-logo td-logo" />
             </div>
             <h2 class="md-typescale-headline-small confirm-dialog-title brand-name">talkdude</h2>
             <p class="md-typescale-body-medium about-tagline">

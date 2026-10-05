@@ -292,7 +292,7 @@
 .character-greeting em { color: var(--md-sys-color-on-surface-variant); }
 .character-greeting p { margin: 0; }
 .character-detail-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.character-detail-actions .td-btn { flex: 1 1 0; min-width: 96px; }
+.character-detail-actions .td-btn { flex: 1 1 0; min-width: 0; padding: 0 10px; }
 
 @media (max-width: 599px) {
   .characters-grid { grid-template-columns: 1fr; gap: 10px; }

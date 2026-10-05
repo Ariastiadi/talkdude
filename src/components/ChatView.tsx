@@ -154,7 +154,7 @@ export default function ChatView() {
     .map((p) => (p as { type: "text"; text: string }).text)
     .join("\n");
   const ModelAvatar = () => (
-    <Show when={activeCharacter()} fallback={<div class="avatar-icon lumi-logo" />}>
+    <Show when={activeCharacter()} fallback={<div class="avatar-icon td-logo" />}>
       {(ch) => <CharacterAvatar avatar={ch().avatar} size={34} />}
     </Show>
   );
@@ -451,7 +451,7 @@ export default function ChatView() {
         return (
           <div class={`code-exec-result ${part.outcome === "OUTCOME_OK" ? "result-ok" : "result-error"}`}>
             <div class="code-exec-result-header md-typescale-label-small">
-              <md-icon>{part.outcome === "OUTCOME_OK" ? "check_circle" : "error_outline"}</md-icon>
+              <md-icon>{part.outcome === "OUTCOME_OK" ? "check_circle" : "error"}</md-icon>
               <span>
                 {part.outcome === "OUTCOME_OK"
                   ? "Output"
@@ -939,7 +939,7 @@ export default function ChatView() {
       {/* Upload error banner (shown when upload auto-fails and attachment is removed) */}
       <Show when={fileUploadError()}>
         <div class="upload-error-banner">
-          <md-icon class="upload-error-icon">error_outline</md-icon>
+          <md-icon class="upload-error-icon">error</md-icon>
           <span class="md-typescale-label-medium">{fileUploadError()}</span>
           <button type="button" class="icon-btn icon-btn-sm upload-error-dismiss" onClick={() => setFileUploadError(null)}>
             <md-icon>close</md-icon>
@@ -1346,7 +1346,7 @@ export default function ChatView() {
                     {(result) => (
                       <div class={`code-exec-result ${result.outcome === "OUTCOME_OK" ? "result-ok" : "result-error"}`}>
                         <div class="code-exec-result-header md-typescale-label-small">
-                          <md-icon>{result.outcome === "OUTCOME_OK" ? "check_circle" : "error_outline"}</md-icon>
+                          <md-icon>{result.outcome === "OUTCOME_OK" ? "check_circle" : "error"}</md-icon>
                           <span>
                             {result.outcome === "OUTCOME_OK"
                               ? "Output"
@@ -1395,7 +1395,7 @@ export default function ChatView() {
 
           <Show when={chatError() && !setupNeeded()}>
             <div class="chat-error md-typescale-body-medium">
-              <md-icon class="error-icon">error_outline</md-icon>
+              <md-icon class="error-icon">error</md-icon>
               {chatError()}
             </div>
           </Show>
