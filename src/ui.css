@@ -1,0 +1,127 @@
+/* === talkdude shared controls (plain HTML, so they never clip or overflow) === */
+
+.td-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 18px;
+  border-radius: var(--md-sys-shape-corner-full);
+  border: 1px solid transparent;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.2;
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 100%;
+  box-sizing: border-box;
+  transition: background var(--motion-duration-short) var(--motion-easing-standard),
+              opacity var(--motion-duration-short) var(--motion-easing-standard);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.td-btn > span { overflow: hidden; text-overflow: ellipsis; }
+.td-btn md-icon { --md-icon-size: 20px; flex-shrink: 0; }
+.td-btn:disabled { opacity: 0.4; cursor: default; }
+.td-btn:not(:disabled):active { transform: scale(0.98); }
+
+.td-btn-primary {
+  background: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+}
+@media (hover: hover) { .td-btn-primary:not(:disabled):hover { opacity: 0.88; } }
+
+.td-btn-outline {
+  background: transparent;
+  color: var(--md-sys-color-on-surface);
+  border-color: var(--md-sys-color-outline-variant);
+}
+@media (hover: hover) { .td-btn-outline:not(:disabled):hover { background: var(--md-sys-color-surface-container-high); } }
+
+.td-btn-ghost {
+  background: transparent;
+  color: var(--md-sys-color-on-surface);
+}
+@media (hover: hover) { .td-btn-ghost:not(:disabled):hover { background: var(--md-sys-color-surface-container-high); } }
+
+.td-btn-danger {
+  background: transparent;
+  color: var(--md-sys-color-error);
+  border-color: color-mix(in srgb, var(--md-sys-color-error) 40%, transparent);
+}
+
+.td-btn-sm { min-height: 36px; padding: 0 14px; font-size: 13px; }
+.td-btn-block { width: 100%; }
+
+.td-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--md-sys-color-on-surface-variant);
+}
+.td-badge::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--td-accent);
+}
+
+/* Bottom sheet on phones, centered dialog on larger screens. */
+.td-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: td-fade 150ms ease-out;
+}
+
+.td-sheet {
+  width: min(480px, calc(100vw - 32px));
+  max-height: min(86vh, 760px);
+  overflow-y: auto;
+  background: var(--md-sys-color-surface-container);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-extra-large);
+  padding: 20px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  animation: td-pop 200ms var(--motion-easing-emphasized-decelerate);
+}
+
+@media (max-width: 599px) {
+  .td-sheet-backdrop { align-items: flex-end; }
+  .td-sheet {
+    width: 100%;
+    max-height: 88vh;
+    border-radius: var(--md-sys-shape-corner-extra-large) var(--md-sys-shape-corner-extra-large) 0 0;
+    border-bottom: none;
+    padding: 12px 20px calc(20px + env(safe-area-inset-bottom));
+    animation: td-up 220ms var(--motion-easing-emphasized-decelerate);
+  }
+  .td-sheet::before {
+    content: "";
+    align-self: center;
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--md-sys-color-outline-variant);
+    margin-bottom: 4px;
+    flex-shrink: 0;
+  }
+}
+
+@keyframes td-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes td-pop { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: scale(1); } }
+@keyframes td-up { from { transform: translateY(40px); opacity: 0.4; } to { transform: translateY(0); opacity: 1; } }
