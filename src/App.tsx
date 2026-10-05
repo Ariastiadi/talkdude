@@ -5,6 +5,8 @@ import { loadCustomInstructions } from "./lib/stores/custom-instructions";
 import { initSettings, settingsDialogOpen } from "./lib/stores/settings";
 import { loadCharacters, charactersViewOpen } from "./lib/stores/characters";
 import { initDB } from "./lib/db";
+import { refreshLocalModels } from "./lib/api/local";
+import { fixSelectedModel } from "./lib/stores/ai";
 import { isTauri, isMobile, platformOpenUrl } from "./lib/platform";
 import { createSignal } from "solid-js";
 
@@ -17,6 +19,7 @@ import "./lib/material-web";
 import "./theme.css";
 import "./markdown-theme.css";
 import "./App.css";
+import "./ui.css";
 
 const [sidebarOpen, setSidebarOpen] = createSignal(false);
 export { sidebarOpen, setSidebarOpen };
@@ -27,9 +30,11 @@ function App() {
   onMount(async () => {
     await initDB();
     await initSettings();
+    await refreshLocalModels();
     await initAuth();
     await loadCharacters();
     await loadConversations();
+    fixSelectedModel();
     await loadCustomInstructions();
     setAppReady(true);
 
