@@ -37,7 +37,8 @@ Your chats are stored only on your device. talkdude has no server of its own.
 ## Features
 
 - **Works with no key at all.** Download Qwen 2.5 0.5B (398 MB), Llama 3.2 1B (808 MB) or Qwen 2.5 1.5B (986 MB) once, then chat as much as you like, even in airplane mode.
-- **Small.** The Android APK is only a few MB: the on-device engine (9 MB) and models are downloaded only if you use them.
+- **Small.** The Android APK is about 8 MB, with a fast native llama.cpp engine built in; models are downloaded only if you use them.
+- **Learns from your chats.** talkdude notes what you tell it about yourself (name, interests, plans, how you like answers) and gives the relevant notes to the AI in every chat, so the built-in AI gets more personal over time. See, edit or delete everything it learned in Settings → Memory.
 - **Many providers in one model picker.** Gemini and Gemma, Claude, OpenAI, Groq, OpenRouter, DeepSeek, Mistral, Ollama, or any OpenAI-compatible server.
 - **No chat limits.** talkdude never counts your messages. When a cloud model hits its free-tier limit, the reply continues on the next model you've set up.
 - **Create a Chat AI.** Make your own AI in three steps: a name and photo (or emoji), a personality (pick traits like witty or caring, what they are to you, how they talk, plus your own description) and a first message.
