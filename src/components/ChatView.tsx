@@ -53,6 +53,7 @@ import { apiKey } from "../lib/stores/auth";
 import { hasUsableAI } from "../lib/stores/ai";
 import { downloadedLocal, downloadProgress, loadingLocal, localModelInfo, DEFAULT_LOCAL_MODEL } from "../lib/api/local";
 import AiSetupCard from "./AiSetup";
+import { lastLearned, setLastLearned } from "../lib/stores/learning";
 import type { Message, MessagePart } from "../lib/db";
 import { AVAILABLE_MODELS, modelSupportsCodeExecution, modelSupportsUrlContext } from "../lib/api/types";
 import { renderMarkdown } from "../lib/markdown";
@@ -510,6 +511,14 @@ export default function ChatView() {
       }, 200);
     }, 4000);
   };
+
+  // Tell the user when talkdude learned something new about them.
+  createEffect(() => {
+    const t = lastLearned();
+    if (!t) return;
+    untrack(() => showSnackbar(`Remembered: ${t}`));
+    setLastLearned(null);
+  });
 
   // Save a base64 inline image to Downloads.
   //
