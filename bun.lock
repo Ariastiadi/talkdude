@@ -26,6 +26,7 @@
       },
       "devDependencies": {
         "@tauri-apps/cli": "2.10.0",
+        "@wllama/wllama-compat": "3.8.1",
         "typescript": "5.6.3",
         "vite": "6.4.1",
         "vite-plugin-solid": "2.11.10",
@@ -266,6 +267,8 @@
     "@types/trusted-types": ["@types/trusted-types@2.0.7", "", {}, "sha512-ScaPdn1dQczgbl0QFTeTOmVHFULt394XJgOQNoyVhZ6r2vLnMLJfBPd53SB52T/3G36VI1/g2MZaX0cwDuXsfw=="],
 
     "@wllama/wllama": ["@wllama/wllama@3.8.1", "", {}, "sha512-Pl7BEJhPU8OHnV/yhn3DFZYhLLOdSHh+4TND79WCftHnlUAdQPAsyc/CfIOY+4mVxvf5VW3Xw3Uf7BBfotS1gw=="],
+
+    "@wllama/wllama-compat": ["@wllama/wllama-compat@3.8.1", "", {}, "sha512-IvmjrJ+JzDbt3w1FQq1yAmnFEiLGCceowK2Q80zW+k9ChFkPBM1ByX/9xm2xVxyd8MHC50VpuDo6SDE83k9kIQ=="],
 
     "agent-base": ["agent-base@7.1.4", "", {}, "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ=="],
 

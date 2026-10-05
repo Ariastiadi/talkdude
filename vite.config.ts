@@ -12,6 +12,9 @@ const pkg = JSON.parse(readFileSync("package.json", "utf-8"));
 // app; it is downloaded on first use from the npm CDN and checked against this hash.
 const wllamaPkg = JSON.parse(readFileSync("node_modules/@wllama/wllama/package.json", "utf-8"));
 const wllamaWasm = readFileSync("node_modules/@wllama/wllama/esm/wasm/wllama.wasm");
+const compatWasm = readFileSync("node_modules/@wllama/wllama-compat/wasm/wllama.wasm");
+const compatJs = readFileSync("node_modules/@wllama/wllama-compat/wasm/wllama.js");
+const sha256 = (b: Buffer) => createHash("sha256").update(b).digest("hex");
 
 // KaTeX ships every font as woff2 + woff + ttf; WebViews only need woff2.
 const katexWoff2Only = {
@@ -30,8 +33,12 @@ export default defineConfig(async () => ({
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
     __WLLAMA_VERSION__: JSON.stringify(wllamaPkg.version),
-    __WLLAMA_WASM_SHA256__: JSON.stringify(createHash("sha256").update(wllamaWasm).digest("hex")),
+    __WLLAMA_WASM_SHA256__: JSON.stringify(sha256(wllamaWasm)),
     __WLLAMA_WASM_SIZE__: String(wllamaWasm.length),
+    __WLLAMA_COMPAT_WASM_SHA256__: JSON.stringify(sha256(compatWasm)),
+    __WLLAMA_COMPAT_WASM_SIZE__: String(compatWasm.length),
+    __WLLAMA_COMPAT_JS_SHA256__: JSON.stringify(sha256(compatJs)),
+    __WLLAMA_COMPAT_JS_SIZE__: String(compatJs.length),
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
