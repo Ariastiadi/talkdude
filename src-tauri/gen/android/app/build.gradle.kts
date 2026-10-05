@@ -68,6 +68,9 @@ android {
             manifestPlaceholders["usesCleartextTraffic"] = "true"
             signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
+            isShrinkResources = true
+            // Compress the native library inside the APK: a much smaller download.
+            packaging { jniLibs.useLegacyPackaging = true }
             proguardFiles(
                 *fileTree(".") { include("**/*.pro") }
                     .plus(getDefaultProguardFile("proguard-android-optimize.txt"))
