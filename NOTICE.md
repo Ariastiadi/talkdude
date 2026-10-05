@@ -13,8 +13,8 @@ distributed under the GPL-3.0-or-later.
 - **Doto** dot-matrix font (subset, embedded in `src/theme.css`) — Copyright 2024
   The Doto Project Authors (https://github.com/oliverlalan/Doto), SIL Open Font
   License 1.1.
-- **Google Sans / Google Sans Text / Material Symbols** fonts in `public/fonts/` —
-  carried over from Lumi AI; see Google's font licenses.
+- **Material Symbols Rounded** icon font (subset to the icons the app uses, `public/fonts/`) —
+  Copyright Google LLC, Apache License 2.0 (https://github.com/google/material-design-icons).
 
 ## Original Lumi AI license (MIT)
 
