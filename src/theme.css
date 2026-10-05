@@ -13,9 +13,9 @@
 
 :root {
   /* === Reference Typeface === */
-  --md-ref-typeface-brand: "Google Sans", "Segoe UI", system-ui, sans-serif;
-  --md-ref-typeface-plain: "Google Sans Text", "Segoe UI", system-ui, sans-serif;
-  --td-dot-font: "Doto", "Google Sans", monospace;
+  --md-ref-typeface-brand: system-ui, -apple-system, "Roboto", "Segoe UI", "Noto Sans", "Helvetica Neue", Arial, sans-serif;
+  --md-ref-typeface-plain: system-ui, -apple-system, "Roboto", "Segoe UI", "Noto Sans", "Helvetica Neue", Arial, sans-serif;
+  --td-dot-font: "Doto", ui-monospace, monospace;
 
   /* === Light (default) === */
   --md-sys-color-primary: #000000;
@@ -266,7 +266,7 @@ img, a {
 }
 
 /* === Brand Logo Mask === */
-.lumi-logo {
+.td-logo {
   -webkit-mask-image: url('./assets/logo.svg');
   mask-image: url('./assets/logo.svg');
   -webkit-mask-size: contain;
