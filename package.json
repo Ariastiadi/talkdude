@@ -1,6 +1,6 @@
 {
   "name": "talkdude",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "talkdude - multi-provider AI chat companion (Gemini, Claude, OpenAI, Groq, ...) for Android, Windows and Linux",
   "type": "module",
   "scripts": {
