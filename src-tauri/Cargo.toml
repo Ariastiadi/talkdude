@@ -1,6 +1,6 @@
 [package]
 name = "talkdude"
-version = "1.1.1"
+version = "1.2.0"
 description = "talkdude - multi-provider AI chat companion"
 authors = ["Ariastiadi", "iamlooper (original Lumi AI)"]
 edition = "2021"
@@ -34,6 +34,8 @@ tauri-macros = "~2.5"
 tauri-codegen = "~2.5"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
+# Native on-device AI (llama.cpp). OpenMP off; on Android link libc++ statically.
+llama-cpp-2 = { version = "=0.1.158", default-features = false, features = ["android-static-stdcxx"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 # Uses MediaStore API for public directory writes -- required because std::fs
