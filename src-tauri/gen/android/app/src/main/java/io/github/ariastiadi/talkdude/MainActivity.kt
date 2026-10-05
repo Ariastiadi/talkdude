@@ -18,7 +18,10 @@ class MainActivity : TauriActivity() {
       val insets = windowInsets.getInsets(
         WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
       )
-      view.setPadding(insets.left, insets.top, insets.right, insets.bottom)
+      // Keep the message box above the on-screen keyboard: with edge-to-edge the
+      // window no longer shrinks for the keyboard, so pad by the IME height too.
+      val ime = windowInsets.getInsets(WindowInsetsCompat.Type.ime())
+      view.setPadding(insets.left, insets.top, insets.right, maxOf(insets.bottom, ime.bottom))
       windowInsets
     }
   }
