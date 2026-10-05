@@ -5,7 +5,7 @@ import sub from "markdown-it-sub";
 import sup from "markdown-it-sup";
 // @ts-expect-error: no type declarations available
 import mark from "markdown-it-mark";
-import hljs from "highlight.js";
+import hljs from "highlight.js/lib/common";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 
