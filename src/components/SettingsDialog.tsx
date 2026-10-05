@@ -15,6 +15,7 @@ import {
 import { selectedModel, chooseModel } from "../lib/stores/chat";
 import { modelUsable } from "../lib/stores/ai";
 import { DownloadBar } from "./AiSetup";
+import { notes, learningEnabled, setLearningEnabled, addNote, updateNote, deleteNote, clearNotes, MAX_NOTES } from "../lib/stores/learning";
 import { testProvider, fetchModels } from "../lib/api/providers";
 import { persona, setPersona } from "../lib/stores/characters";
 import { platformOpenUrl } from "../lib/platform";
@@ -27,6 +28,7 @@ const TABS: { key: SettingsTab; label: string }[] = [
   { key: "gemini", label: "Gemini" },
   { key: "providers", label: "Providers" },
   { key: "persona", label: "Persona" },
+  { key: "memory", label: "Memory" },
   { key: "appearance", label: "Look" },
 ];
 
@@ -52,6 +54,7 @@ export default function SettingsDialog() {
           </div>
           <div class="settings-body">
             <Show when={tab() === "device"}><DeviceTab /></Show>
+            <Show when={tab() === "memory"}><MemoryTab /></Show>
             <Show when={tab() === "gemini"}><GeminiTab /></Show>
             <Show when={tab() === "providers"}><ProvidersTab /></Show>
             <Show when={tab() === "persona"}><PersonaTab /></Show>
@@ -60,6 +63,61 @@ export default function SettingsDialog() {
         </div>
       </div>
     </Portal>
+  );
+}
+
+// === Memory Tab ===
+
+function MemoryTab() {
+  const [draft, setDraft] = createSignal("");
+  const [editing, setEditing] = createSignal<string | null>(null);
+  const [editText, setEditText] = createSignal("");
+  const [confirmClear, setConfirmClear] = createSignal(false);
+  return (
+    <div class="settings-section">
+      <p class="md-typescale-body-medium apikey-dialog-subtitle">
+        talkdude learns from your chats: it notes things you tell it about yourself (your name, interests, plans, how you like answers) and gives the relevant ones to the AI in every chat, so it gets more personal and helpful over time. Notes stay on this device.
+      </p>
+      <label class="settings-toggle">
+        <div>
+          <div class="md-typescale-body-large">Learn from my chats</div>
+          <div class="md-typescale-body-small settings-help">{learningEnabled() ? "On. New facts are added after replies; you'll see “Remembered: …”." : "Off. Nothing new is learned and saved notes aren't used."}</div>
+        </div>
+        <input type="checkbox" checked={learningEnabled()} onChange={(e) => setLearningEnabled(e.currentTarget.checked)} />
+        <span class={`toggle-track ${learningEnabled() ? "on" : ""}`}><span class="toggle-thumb" /></span>
+      </label>
+      <form class="memory-add" onSubmit={async (e) => { e.preventDefault(); if (await addNote(draft())) setDraft(""); }}>
+        <input class="api-key-input" placeholder="Add something to remember, e.g. “I prefer short answers”" value={draft()} onInput={(e) => setDraft(e.currentTarget.value)} />
+        <button type="submit" class="td-btn td-btn-primary td-btn-sm" disabled={draft().trim().length < 4}><span>Add</span></button>
+      </form>
+      <div class="md-typescale-label-medium settings-help">{notes().length} of {MAX_NOTES} notes</div>
+      <Show when={notes().length === 0}>
+        <p class="md-typescale-body-small settings-help">Nothing learned yet. Just chat — try telling talkdude your name or what you're working on.</p>
+      </Show>
+      <For each={notes()}>
+        {(n) => (
+          <div class="memory-item md-typescale-body-small">
+            <Show when={editing() === n.id} fallback={<span>{n.text}</span>}>
+              <input class="api-key-input" value={editText()} onInput={(e) => setEditText(e.currentTarget.value)}
+                onKeyDown={async (e) => { if (e.key === "Enter") { await updateNote(n.id, editText()); setEditing(null); } }} />
+            </Show>
+            <Show when={editing() === n.id} fallback={
+              <md-icon-button class="action-btn" type="button" aria-label="Edit note" onClick={() => { setEditing(n.id); setEditText(n.text); }}><md-icon>edit</md-icon></md-icon-button>
+            }>
+              <md-icon-button class="action-btn" type="button" aria-label="Save note" onClick={async () => { await updateNote(n.id, editText()); setEditing(null); }}><md-icon>check</md-icon></md-icon-button>
+            </Show>
+            <md-icon-button class="action-btn" type="button" aria-label="Forget" onClick={() => deleteNote(n.id)}><md-icon>close</md-icon></md-icon-button>
+          </div>
+        )}
+      </For>
+      <Show when={notes().length > 0}>
+        <div class="settings-row">
+          <button type="button" class="td-btn td-btn-danger td-btn-sm" onClick={async () => { if (confirmClear()) { await clearNotes(); setConfirmClear(false); } else setConfirmClear(true); }}>
+            <md-icon>delete_sweep</md-icon><span>{confirmClear() ? "Tap again to forget everything" : "Forget everything"}</span>
+          </button>
+        </div>
+      </Show>
+    </div>
   );
 }
 
