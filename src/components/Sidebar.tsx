@@ -19,6 +19,7 @@ import {
 } from "../lib/stores/chat";
 import type { Conversation } from "../lib/db";
 import { apiKey } from "../lib/stores/auth";
+import { downloadedLocal } from "../lib/api/local";
 import { setSettingsDialogOpen, providers, providerUsable } from "../lib/stores/settings";
 import { exportConversationMarkdown, exportBackup, importBackup } from "../lib/export";
 import { getCharacter, setCharactersViewOpen, loadCharacters } from "../lib/stores/characters";
@@ -78,9 +79,12 @@ export default function Sidebar() {
   };
 
   const keyStatus = () => {
-    const n = (apiKey() ? 1 : 0) + providers().filter(providerUsable).length;
-    if (n === 0) return "No API key yet";
-    return n === 1 ? "1 provider ready" : `${n} providers ready`;
+    const parts: string[] = [];
+    if (apiKey()) parts.push("Gemini");
+    const np = providers().filter(providerUsable).length;
+    if (np) parts.push(np === 1 ? "1 provider" : `${np} providers`);
+    if (downloadedLocal().length) parts.push("on-device");
+    return parts.length ? `AI ready: ${parts.join(" · ")}` : "No AI set up yet";
   };
 
   const isSelectMode = () => selectedIds().size > 0;
@@ -309,8 +313,8 @@ export default function Sidebar() {
             <div class="brand-icon lumi-logo" />
             <span class="md-typescale-title-medium brand-name">talkdude</span>
           </div>
-          <md-icon-button type="button" aria-label="New chat" onClick={handleNewChat}>
-            <md-icon>edit_square</md-icon>
+          <md-icon-button class="sidebar-close" type="button" aria-label="Close menu" onClick={() => setSidebarOpen(false)}>
+            <md-icon>close</md-icon>
           </md-icon-button>
         </div>
       }>
@@ -343,10 +347,16 @@ export default function Sidebar() {
         </div>
       </Show>
 
-      <button type="button" class="sidebar-characters-btn" onClick={() => { setCharactersViewOpen(true); setSidebarOpen(false); }}>
-        <md-icon>groups</md-icon>
-        <span>Characters</span>
-      </button>
+      <nav class="sidebar-nav">
+        <button type="button" class="sidebar-nav-item" onClick={handleNewChat}>
+          <md-icon>add_comment</md-icon>
+          <span>New chat</span>
+        </button>
+        <button type="button" class="sidebar-nav-item sidebar-characters-btn" onClick={() => { setCharactersViewOpen(true); setSidebarOpen(false); }}>
+          <md-icon>groups</md-icon>
+          <span>Characters</span>
+        </button>
+      </nav>
 
       <div class="sidebar-search">
         <md-icon class="search-icon">search</md-icon>
@@ -423,21 +433,13 @@ export default function Sidebar() {
           </Show>
         </div>
         <md-divider></md-divider>
-        <div class="sidebar-account">
-          <div class="account-info">
-            <md-icon class="account-icon">key</md-icon>
-            <span class="md-typescale-body-medium account-email">
-              {keyStatus()}
-            </span>
-          </div>
-          <md-icon-button
-            type="button"
-            aria-label="Settings"
-            onClick={() => setSettingsDialogOpen(true)}
-          >
-            <md-icon>settings</md-icon>
-          </md-icon-button>
-        </div>
+        <button type="button" class="sidebar-account" onClick={() => { setSettingsDialogOpen(true); if (window.innerWidth < 900) setSidebarOpen(false); }}>
+          <span class="account-info">
+            <span class={`status-dot ${keyStatus().startsWith("AI ready") ? "ok" : ""}`} />
+            <span class="md-typescale-body-medium account-email">{keyStatus()}</span>
+          </span>
+          <md-icon class="account-settings-icon">settings</md-icon>
+        </button>
       </div>
     </aside>
 
