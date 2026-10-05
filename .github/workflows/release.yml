@@ -20,7 +20,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf cmake clang libclang-dev
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -96,6 +96,11 @@ jobs:
       - name: Generate app icons
         run: bun run tauri icon app-icon.svg
 
+      # llama.cpp (on-device AI) is compiled with CMake; its Rust bindings need libclang.
+      - name: Point bindgen at LLVM
+        shell: bash
+        run: echo "LIBCLANG_PATH=C:\\Program Files\\LLVM\\bin" >> $GITHUB_ENV
+
       - name: Build Windows app
         shell: bash
         run: |
@@ -144,6 +149,10 @@ jobs:
           yes | sdkmanager --install "ndk;29.0.14206865" > /dev/null
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> $GITHUB_ENV
           echo "NDK_VERSION=29.0.14206865" >> $GITHUB_ENV
+          # llama.cpp (native on-device AI) is built with the NDK's CMake toolchain.
+          echo "ANDROID_NDK=$ANDROID_HOME/ndk/29.0.14206865" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/29.0.14206865" >> $GITHUB_ENV
+          echo "ANDROID_API_LEVEL=24" >> $GITHUB_ENV
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
