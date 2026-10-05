@@ -1,6 +1,6 @@
 [package]
 name = "talkdude"
-version = "1.0.0"
+version = "1.1.0"
 description = "talkdude - multi-provider AI chat companion"
 authors = ["Ariastiadi", "iamlooper (original Lumi AI)"]
 edition = "2021"
