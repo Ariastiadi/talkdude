@@ -8,7 +8,6 @@
  */
 import { createSignal } from "solid-js";
 import type { Wllama, ModelManager } from "@wllama/wllama";
-import wasmUrl from "@wllama/wllama/esm/wasm/wllama.wasm?url";
 import type { GeminiContent } from "./types";
 import type { StreamCallbacks } from "./gemini";
 import { isMobile, installMobileFetch } from "../platform";
@@ -83,12 +82,22 @@ let loadingPromise: Promise<void> | null = null;
 /** Only one generation at a time; the engine has a single context. */
 let queue: Promise<unknown> = Promise.resolve();
 
+/** Last native error lines, shown with crash messages to make them actionable. */
+const recentErrors: string[] = [];
 const quietLogger = {
   debug: () => {},
   log: () => {},
   warn: (...a: unknown[]) => console.warn("[on-device]", ...a),
-  error: (...a: unknown[]) => console.error("[on-device]", ...a),
+  error: (...a: unknown[]) => {
+    console.error("[on-device]", ...a);
+    const line = a.map((x) => (x instanceof Error ? x.message : String(x))).join(" ").split("\n")[0].trim();
+    if (line && !/^Stack trace/i.test(line)) { recentErrors.push(line.slice(0, 160)); if (recentErrors.length > 5) recentErrors.shift(); }
+  },
 };
+
+function engineInfo(): string {
+  return `engine ${needsCompatEngine() ? "compat" : "standard"}; JSPI ${supportsJspi() ? "yes" : "no"}, Memory64 ${supportsMemory64() ? "yes" : "no"}`;
+}
 
 async function mod() {
   if (!wllamaMod) wllamaMod = await import("@wllama/wllama");
@@ -101,6 +110,101 @@ async function getManager(): Promise<ModelManager> {
     manager = new m.ModelManager({ logger: quietLogger, allowOffline: true, parallelDownloads: 2 });
   }
   return manager;
+}
+
+// === Engine (llama.cpp WebAssembly) ===
+// Not bundled, to keep the app small: fetched once with the first model download,
+// verified against the hash of the version talkdude was built with, then cached.
+
+type EngineFile = { url: string; size: number; sha256: string; type: string };
+
+const CDN = "https://cdn.jsdelivr.net/npm";
+const ENGINE_DEFAULT: EngineFile[] = [
+  { url: `${CDN}/@wllama/wllama@${__WLLAMA_VERSION__}/esm/wasm/wllama.wasm`, size: __WLLAMA_WASM_SIZE__, sha256: __WLLAMA_WASM_SHA256__, type: "application/wasm" },
+];
+// For WebViews without JSPI or Memory64 (older Android System WebView): slower, but works.
+const ENGINE_COMPAT: EngineFile[] = [
+  { url: `${CDN}/@wllama/wllama-compat@${__WLLAMA_VERSION__}/wasm/wllama.wasm`, size: __WLLAMA_COMPAT_WASM_SIZE__, sha256: __WLLAMA_COMPAT_WASM_SHA256__, type: "application/wasm" },
+  { url: `${CDN}/@wllama/wllama-compat@${__WLLAMA_VERSION__}/wasm/wllama.js`, size: __WLLAMA_COMPAT_JS_SIZE__, sha256: __WLLAMA_COMPAT_JS_SHA256__, type: "text/javascript" },
+];
+
+function supportsJspi(): boolean {
+  return !!(WebAssembly as any).Suspending;
+}
+
+function supportsMemory64(): boolean {
+  try {
+    new WebAssembly.Memory({ address: "i64", initial: 1n } as any);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** True when this WebView can't run the fast engine build. */
+export function needsCompatEngine(): boolean {
+  return !supportsJspi() || !supportsMemory64();
+}
+
+function engineFiles(): EngineFile[] {
+  return needsCompatEngine() ? ENGINE_COMPAT : ENGINE_DEFAULT;
+}
+
+export function engineSize(): number {
+  return engineFiles().reduce((n, f) => n + f.size, 0);
+}
+
+/** Kept for deleting everything when the last model is removed. */
+export const ENGINE_URLS = [...ENGINE_DEFAULT, ...ENGINE_COMPAT].map((f) => f.url);
+
+const engineBlobUrls = new Map<string, string>();
+
+async function sha256Hex(blob: Blob): Promise<string> {
+  const buf = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function engineCached(): Promise<boolean> {
+  try {
+    const cm = (await getManager()).cacheManager;
+    for (const f of engineFiles()) {
+      const blob = await cm.open(f.url);
+      if (!blob || blob.size !== f.size) return false;
+    }
+    return true;
+  } catch { return false; }
+}
+
+/**
+ * Downloads (if needed) and verifies the engine files; returns blob: URLs the
+ * worker can load. Not bundled with the app, to keep it small.
+ */
+async function ensureEngine(onProgress?: (loaded: number) => void, signal?: AbortSignal): Promise<Map<string, string>> {
+  const cm = (await getManager()).cacheManager;
+  const out = new Map<string, string>();
+  let done = 0;
+  for (const f of engineFiles()) {
+    const known = engineBlobUrls.get(f.url);
+    if (known) { out.set(f.url, known); done += f.size; continue; }
+    let blob = await cm.open(f.url);
+    if (!blob || blob.size !== f.size) {
+      await installMobileFetch();
+      if (blob) await cm.delete(f.url);
+      const base = done;
+      await cm.download(f.url, { signal, progressCallback: ({ loaded }) => onProgress?.(base + loaded) });
+      blob = await cm.open(f.url);
+    }
+    if (!blob || (await sha256Hex(blob)) !== f.sha256) {
+      await cm.delete(f.url).catch(() => {});
+      throw new Error("The on-device engine download was damaged. Please try again.");
+    }
+    const url = URL.createObjectURL(new Blob([blob], { type: f.type }));
+    engineBlobUrls.set(f.url, url);
+    out.set(f.url, url);
+    done += f.size;
+    onProgress?.(done);
+  }
+  return out;
 }
 
 export function localSupported(): boolean {
@@ -132,12 +236,15 @@ export async function downloadLocalModel(key: string): Promise<void> {
     try { await navigator.storage?.persist?.(); } catch { /* ignore */ }
     await installMobileFetch();
     const mm = await getManager();
+    const engineTotal = (await engineCached()) ? 0 : engineSize();
+    const total = info.size + engineTotal;
+    let engineDone = 0;
+    const report = (modelLoaded: number) =>
+      setDownloadProgress((p) => ({ ...p, [key]: Math.min(1, (engineDone + modelLoaded) / total) }));
+    if (engineTotal) await ensureEngine((l) => { engineDone = Math.min(l, engineTotal); report(0); }, ac.signal);
     await mm.downloadModel(info.url, {
       signal: ac.signal,
-      progressCallback: ({ loaded, total }) => {
-        const t = total || info.size;
-        setDownloadProgress((p) => ({ ...p, [key]: Math.min(1, loaded / t) }));
-      },
+      progressCallback: ({ loaded }) => report(loaded),
     });
     await refreshLocalModels();
   } catch (e) {
@@ -168,6 +275,12 @@ export async function deleteLocalModel(key: string): Promise<void> {
   const models = await mm.getModels({ includeInvalid: true });
   for (const m of models) if (m.url === info.url) await m.remove();
   await refreshLocalModels();
+  // Free the engine too once no model is left.
+  if (downloadedLocal().length === 0) {
+    for (const u of ENGINE_URLS) { try { await mm.cacheManager.delete(u); } catch { /* ignore */ } }
+    for (const u of engineBlobUrls.values()) URL.revokeObjectURL(u);
+    engineBlobUrls.clear();
+  }
 }
 
 async function ensureLoaded(key: string): Promise<Wllama> {
@@ -190,17 +303,35 @@ async function ensureLoaded(key: string): Promise<Wllama> {
     const model = (await mm.getModels()).find((x) => x.url === info.url);
     if (!model) throw new Error(`${info.name} is not downloaded yet.`);
     const threads = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1));
-    const make = () => new m.Wllama({ default: wasmUrl }, { logger: quietLogger, allowOffline: true, modelManager: mm });
+    const urls = await ensureEngine();
+    const compat = needsCompatEngine();
+    let compatWorker = "";
+    if (compat) {
+      const js = await mm.cacheManager.open(ENGINE_COMPAT[1].url);
+      compatWorker = js ? await js.text() : "";
+    }
+    const make = () => {
+      const w = new m.Wllama(
+        { default: urls.get((compat ? ENGINE_COMPAT : ENGINE_DEFAULT)[0].url)! },
+        { logger: quietLogger, allowOffline: true, modelManager: mm },
+      );
+      if (compat) w.setCompat({ worker: { code: compatWorker }, wasm: urls.get(ENGINE_COMPAT[0].url)! });
+      return w;
+    };
+    // Phones: smaller context and batches keep memory use low.
+    const params = isMobile()
+      ? { n_ctx: Math.min(info.ctx, 2048), n_batch: 256, n_ubatch: 256, n_threads: threads }
+      : { n_ctx: info.ctx, n_threads: threads };
     let w = make();
     // WebGPU on phones is still unreliable, so phones always use the CPU.
-    const tryGpu = !isMobile() && w.isSupportWebGPU();
+    const tryGpu = !isMobile() && !compat && w.isSupportWebGPU();
     try {
-      await w.loadModel(model, { n_ctx: info.ctx, n_threads: threads, n_gpu_layers: tryGpu ? 999 : 0 });
+      await w.loadModel(model, { ...params, n_gpu_layers: tryGpu ? 999 : 0 });
     } catch (e) {
-      if (!tryGpu) throw e;
       try { await w.exit(); } catch { /* ignore */ }
+      if (!tryGpu) throw e;
       w = make();
-      await w.loadModel(model, { n_ctx: info.ctx, n_threads: threads, n_gpu_layers: 0 });
+      await w.loadModel(model, { ...params, n_gpu_layers: 0 });
     }
     engine = w;
     loadedKey = key;
@@ -278,9 +409,18 @@ export async function streamLocal(
     } catch (e) {
       if (signal?.aborted || (e as any)?.name === "AbortError") return;
       const msg = e instanceof Error ? e.message : String(e);
-      callbacks.onError?.(/memory|OOM|allocate/i.test(msg)
-        ? "Not enough memory to run this on-device model. Try a smaller one in Settings → On-device."
-        : `On-device model error: ${msg}`);
+      // A crashed engine can't be reused; the next message starts a fresh one.
+      if (/ABORT|crash|RuntimeError|unreachable/i.test(msg) && engine) {
+        const dead = engine;
+        engine = null;
+        loadedKey = null;
+        void dead.exit().catch(() => {});
+      }
+      const detail = recentErrors.length ? ` Details: ${recentErrors[recentErrors.length - 1]}.` : "";
+      callbacks.onError?.(/memory|OOM|allocate/i.test(msg + detail)
+        ? "Not enough memory to run this on-device model. Close other apps, or try Qwen 2.5 0.5B in Settings → On-device."
+        : `The on-device model stopped (${msg.trim() || "unknown error"}).${detail} Send your message again to retry. [${engineInfo()}]`);
+      recentErrors.length = 0;
     } finally {
       callbacks.onDone?.();
     }
