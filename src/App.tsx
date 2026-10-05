@@ -7,6 +7,7 @@ import { loadCharacters, charactersViewOpen } from "./lib/stores/characters";
 import { initDB } from "./lib/db";
 import { refreshLocalModels } from "./lib/api/local";
 import { fixSelectedModel } from "./lib/stores/ai";
+import { loadLearning } from "./lib/stores/learning";
 import { isTauri, isMobile, platformOpenUrl } from "./lib/platform";
 import { createSignal } from "solid-js";
 
@@ -33,6 +34,7 @@ function App() {
     await refreshLocalModels();
     await initAuth();
     await loadCharacters();
+    await loadLearning();
     await loadConversations();
     fixSelectedModel();
     await loadCustomInstructions();
