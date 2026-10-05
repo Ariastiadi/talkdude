@@ -4,10 +4,22 @@
  */
 import { createSignal } from "solid-js";
 import { db } from "../db";
+import { downloadedLocal, localModelInfo } from "../api/local";
 
 // === Provider Types ===
 
-export type ProviderType = "gemini" | "openai" | "anthropic";
+export type ProviderType = "gemini" | "openai" | "anthropic" | "local";
+
+/** Built-in provider for models that run on this device (no key, no limits). */
+export const DEVICE_PROVIDER_ID = "device";
+
+function deviceProvider(): Provider {
+  return { id: DEVICE_PROVIDER_ID, type: "local", name: "On-device", baseUrl: "", apiKey: "", models: downloadedLocal() };
+}
+
+export function isDeviceModelId(modelId: string): boolean {
+  return modelId.startsWith(DEVICE_PROVIDER_ID + "::");
+}
 
 export interface Provider {
   id: string;
@@ -55,7 +67,15 @@ const [settingsDialogOpen, setSettingsDialogOpen] = createSignal(false);
 /** When a model hits a rate limit / quota, continue with the next usable model. */
 const [autoFallback, setAutoFallbackSignal] = createSignal(true);
 
-export { providers, theme, safetyOff, settingsDialogOpen, setSettingsDialogOpen, autoFallback };
+export type SettingsTab = "device" | "gemini" | "providers" | "persona" | "appearance";
+const [settingsTab, setSettingsTab] = createSignal<SettingsTab>("device");
+
+export { providers, theme, safetyOff, settingsDialogOpen, setSettingsDialogOpen, autoFallback, settingsTab, setSettingsTab };
+
+export function openSettings(tab?: SettingsTab): void {
+  if (tab) setSettingsTab(tab);
+  setSettingsDialogOpen(true);
+}
 
 // === Composite Model IDs ===
 // Gemini models keep their plain id ("gemini-3.1-flash-lite").
@@ -72,6 +92,9 @@ export function resolveModel(modelId: string): { provider: Provider | null; mode
   const idx = modelId.indexOf(MODEL_SEP);
   const providerId = modelId.slice(0, idx);
   const model = modelId.slice(idx + MODEL_SEP.length);
+  if (providerId === DEVICE_PROVIDER_ID) {
+    return { provider: localModelInfo(model) ? deviceProvider() : null, model };
+  }
   const provider = providers().find((p) => p.id === providerId) ?? null;
   return { provider, model };
 }
@@ -83,6 +106,7 @@ export function makeModelId(providerId: string, model: string): string {
 /** Human-readable label for any model id. */
 export function modelLabel(modelId: string): string {
   const { provider, model } = resolveModel(modelId);
+  if (provider?.type === "local") return `${localModelInfo(model)?.name ?? model} · On-device`;
   return provider ? `${model} · ${provider.name}` : model;
 }
 
@@ -128,6 +152,8 @@ export function usableModelIds(geminiModelIds: string[], hasGeminiKey: boolean):
     for (const m of p.models) ids.push(makeModelId(p.id, m));
   }
   if (hasGeminiKey) ids.push(...geminiModelIds);
+  // On-device models last: they always work, but are slower than the cloud.
+  for (const k of downloadedLocal()) ids.push(makeModelId(DEVICE_PROVIDER_ID, k));
   return ids;
 }
 

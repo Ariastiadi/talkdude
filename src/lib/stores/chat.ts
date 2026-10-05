@@ -12,7 +12,7 @@ import type {
 } from "../api/types";
 import { DEFAULT_MODEL_ID, TITLE_MODEL, modelSupportsCodeExecution, modelSupportsUrlContext } from "../api/types";
 import { getActiveSystemInstruction } from "./custom-instructions";
-import { isGeminiModelId, persistSelectedModel, loadSelectedModel } from "./settings";
+import { isGeminiModelId, isDeviceModelId, persistSelectedModel, loadSelectedModel } from "./settings";
 import {
   getCharacter, buildCharacterPrompt, buildPersonaPrompt, buildMemoryPrompt, fillNames, MAX_MEMORIES,
 } from "./characters";
@@ -1207,6 +1207,8 @@ async function generateTitle(userText: string, modelText: string, convId: string
 
     // Gemini chats use the cheap title model; other providers use their own model.
     const current = selectedModel();
+    // On-device models are busy enough answering; use the first words instead.
+    if (isDeviceModelId(current)) return;
     const titleModel = isGeminiModelId(current) ? TITLE_MODEL : current;
     const result = await sendChat(titleModel, contents, { maxOutputTokens: 60 });
     const title = result.parts

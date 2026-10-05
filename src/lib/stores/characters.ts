@@ -13,8 +13,25 @@ import { saveTextToDownloads, type SaveResult } from "../export";
 const [characters, setCharacters] = createStore<Character[]>([]);
 const [charactersViewOpen, setCharactersViewOpen] = createSignal(false);
 const [persona, setPersonaSignal] = createSignal<{ name: string; description: string }>({ name: "", description: "" });
+/** Character whose detail sheet should open when the Characters view appears. */
+const [pendingCharacterId, setPendingCharacterId] = createSignal<string | null>(null);
 
-export { characters, charactersViewOpen, setCharactersViewOpen, persona };
+export { characters, charactersViewOpen, setCharactersViewOpen, persona, pendingCharacterId, setPendingCharacterId };
+
+/** Opens the Characters view on one character (e.g. from the chat top bar). */
+export function showCharacter(id: string): void {
+  setPendingCharacterId(id);
+  setCharactersViewOpen(true);
+}
+
+// === Creator options ===
+
+export const TRAIT_OPTIONS = [
+  "Cheerful", "Caring", "Witty", "Sarcastic", "Shy", "Confident", "Calm", "Chaotic",
+  "Wise", "Mysterious", "Playful", "Flirty", "Grumpy", "Nerdy", "Brave", "Dramatic",
+];
+export const RELATION_OPTIONS = ["Friend", "Best friend", "Partner", "Crush", "Mentor", "Sibling", "Rival", "Coworker", "Stranger"];
+export const STYLE_OPTIONS = ["Casual", "Formal", "Short replies", "Long replies", "Uses emojis", "Describes actions", "Funny", "Poetic"];
 
 const PERSONA_KEY = "talkdude_persona";
 export const MAX_MEMORIES = 15;
@@ -126,7 +143,14 @@ export async function loadCharacters(): Promise<void> {
 
 /** Built-in starters plus the user's own characters. */
 export function allCharacters(): Character[] {
-  return [...characters, ...STARTER_CHARACTERS];
+  const overrides = new Map(characters.filter((c) => c.id.startsWith("builtin-")).map((c) => [c.id, c]));
+  const mine = characters.filter((c) => !c.id.startsWith("builtin-"));
+  return [...mine, ...STARTER_CHARACTERS.map((s) => overrides.get(s.id) ?? s)];
+}
+
+/** The untouched original of a built-in character. */
+export function originalCharacter(id: string): Character | undefined {
+  return STARTER_CHARACTERS.find((c) => c.id === id);
 }
 
 export function getCharacter(id: string | undefined): Character | undefined {
@@ -136,9 +160,10 @@ export function getCharacter(id: string | undefined): Character | undefined {
 
 export async function saveCharacter(c: Character): Promise<Character> {
   const now = Date.now();
-  const toSave: Character = { ...c, builtIn: false, updatedAt: now, createdAt: c.createdAt || now };
-  // Editing a built-in creates the user's own copy (like "remix").
-  if (c.builtIn || c.id.startsWith("builtin-")) toSave.id = crypto.randomUUID();
+  const isBuiltIn = c.id.startsWith("builtin-");
+  // Built-ins are fully editable: the edited version is stored under the same id
+  // and can be reset to the original later.
+  const toSave: Character = { ...c, builtIn: isBuiltIn, customized: isBuiltIn || undefined, updatedAt: now, createdAt: c.createdAt || now };
   await db.characters.put(JSON.parse(JSON.stringify(toSave)));
   setCharacters(produce((draft) => {
     const idx = draft.findIndex((x) => x.id === toSave.id);
@@ -155,12 +180,22 @@ export async function deleteCharacter(id: string): Promise<void> {
   }));
 }
 
+/** Restores a built-in character to its original version. */
+export async function resetCharacter(id: string): Promise<Character | undefined> {
+  if (!id.startsWith("builtin-")) return getCharacter(id);
+  await deleteCharacter(id);
+  return originalCharacter(id);
+}
+
 export function duplicateCharacter(c: Character): Character {
-  return { ...c, id: crypto.randomUUID(), name: `${c.name} (copy)`, builtIn: false, createdAt: 0, updatedAt: 0, tags: [...c.tags] };
+  return {
+    ...c, id: crypto.randomUUID(), name: `${c.name} (copy)`, builtIn: false, customized: undefined,
+    createdAt: 0, updatedAt: 0, tags: [...c.tags], traits: [...(c.traits ?? [])], style: [...(c.style ?? [])],
+  };
 }
 
 export function emptyCharacter(): Character {
-  return { id: crypto.randomUUID(), name: "", avatar: "🙂", tagline: "", personality: "", scenario: "", greeting: "", exampleDialogue: "", tags: [], createdAt: 0, updatedAt: 0 };
+  return { id: crypto.randomUUID(), name: "", avatar: "🙂", tagline: "", personality: "", scenario: "", greeting: "", exampleDialogue: "", tags: [], traits: [], relation: "", style: [], createdAt: 0, updatedAt: 0 };
 }
 
 export async function setPersona(p: { name: string; description: string }): Promise<void> {
@@ -183,10 +218,20 @@ export function buildCharacterPrompt(c: Character): string {
   lines.push(`You are ${c.name}. Stay fully in character in this roleplay chat with ${persona().name.trim() || "the user"}.`);
   lines.push("Write only your own character's words and actions; never speak or act for the user. Use *asterisks* for actions. Keep replies vivid but not overly long, and keep the story moving.");
   lines.push("Reply in the language the user writes in.");
-  if (c.personality.trim()) lines.push(`\n[Character]\n${fillNames(c.personality.trim(), c.name)}`);
+  const quick = quickProfile(c);
+  if (c.personality.trim() || quick) lines.push(`\n[Character]\n${[quick, fillNames(c.personality.trim(), c.name)].filter(Boolean).join("\n")}`);
   if (c.scenario.trim()) lines.push(`\n[Scenario]\n${fillNames(c.scenario.trim(), c.name)}`);
   if (c.exampleDialogue.trim()) lines.push(`\n[Example dialogue, for style only]\n${fillNames(c.exampleDialogue.trim(), c.name)}`);
   return lines.join("\n");
+}
+
+/** The creator's quick picks as plain sentences (also written into exported cards). */
+export function quickProfile(c: Character, userName = persona().name.trim() || "the user"): string {
+  const out: string[] = [];
+  if (c.traits?.length) out.push(`Personality: ${c.traits.join(", ").toLowerCase()}.`);
+  if (c.relation?.trim()) out.push(`${c.name} is ${userName}'s ${c.relation.trim().toLowerCase()}.`);
+  if (c.style?.length) out.push(`Writing style: ${c.style.join(", ").toLowerCase()}.`);
+  return out.join(" ");
 }
 
 export function buildPersonaPrompt(): string | undefined {
@@ -208,7 +253,7 @@ export function buildMemoryPrompt(memories: PinnedMemory[] | undefined): string 
 interface CardData {
   name?: string; description?: string; personality?: string; scenario?: string;
   first_mes?: string; mes_example?: string; tags?: string[]; creator_notes?: string;
-  extensions?: { talkdude?: { avatar?: string; tagline?: string } };
+  extensions?: { talkdude?: { avatar?: string; tagline?: string; traits?: string[]; relation?: string; style?: string[] } };
 }
 
 function cardToCharacter(d: CardData, avatar?: string): Character {
@@ -222,6 +267,15 @@ function cardToCharacter(d: CardData, avatar?: string): Character {
   c.tags = Array.isArray(d.tags) ? d.tags.filter((t) => typeof t === "string").slice(0, 8) : [];
   c.tagline = d.extensions?.talkdude?.tagline ?? (d.creator_notes ?? "").split("\n")[0].slice(0, 60);
   c.avatar = avatar ?? d.extensions?.talkdude?.avatar ?? "🙂";
+  const td = d.extensions?.talkdude;
+  if (td) {
+    c.traits = Array.isArray(td.traits) ? td.traits.filter((t: unknown) => typeof t === "string") : [];
+    c.relation = typeof td.relation === "string" ? td.relation : "";
+    c.style = Array.isArray(td.style) ? td.style.filter((t: unknown) => typeof t === "string") : [];
+    // Our own export puts the quick picks in the description; don't duplicate them.
+    const quick = quickProfile({ ...c, name: "{{char}}" }, "{{user}}");
+    if (quick && c.personality.startsWith(quick)) c.personality = c.personality.slice(quick.length).trim();
+  }
   return c;
 }
 
@@ -299,7 +353,7 @@ export async function exportCharacter(c: Character): Promise<SaveResult> {
     spec_version: "2.0",
     data: {
       name: c.name,
-      description: c.personality,
+      description: [quickProfile({ ...c, name: "{{char}}" }, "{{user}}"), c.personality].filter(Boolean).join("\n\n"),
       personality: "",
       scenario: c.scenario,
       first_mes: c.greeting,
@@ -311,7 +365,7 @@ export async function exportCharacter(c: Character): Promise<SaveResult> {
       tags: c.tags,
       creator: "talkdude",
       character_version: "1",
-      extensions: { talkdude: { avatar: c.avatar, tagline: c.tagline } },
+      extensions: { talkdude: { avatar: c.avatar, tagline: c.tagline, traits: c.traits ?? [], relation: c.relation ?? "", style: c.style ?? [] } },
     },
   };
   const safe = c.name.replace(/[\\/:*?"<>|]+/g, " ").trim() || "character";
