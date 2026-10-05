@@ -820,11 +820,6 @@
   animation: popup-in 150ms var(--motion-easing-emphasized-decelerate);
 }
 
-.model-popup {
-  left: auto;
-  right: 0;
-  max-width: min(280px, calc(100vw - 32px));
-}
 
 @keyframes popup-in {
   from { opacity: 0; transform: translateY(4px) scale(0.97); }
@@ -1439,7 +1434,6 @@
     right: 0;
     min-width: unset;
   }
-  .model-popup { left: 0; }
   .instructions-popup { min-width: unset; }
   .thinking-popup { min-width: unset; }
   /* Anchor is static, so badge absolute breaks; use relative + negative margin instead */
@@ -1488,4 +1482,156 @@
 
 .snackbar-text {
   display: block;
+}
+
+
+/* =====================================================================
+   talkdude layout polish (mobile first)
+   ===================================================================== */
+
+.hidden { display: none !important; }
+
+/* --- Top bar: title + model picker underneath --- */
+.chat-topbar {
+  position: relative;
+  padding: calc(6px + env(safe-area-inset-top)) 4px 6px 4px;
+  min-height: 60px;
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+  gap: 6px;
+}
+
+.topbar-titles {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  flex: 1;
+  padding-left: 2px;
+}
+
+.topbar-titles .chat-topbar-title {
+  max-width: 100%;
+  padding-left: 0;
+  line-height: 1.25;
+  font-weight: 600;
+}
+
+.topbar-spacer { display: none; }
+
+.model-anchor { position: static; max-width: 100%; }
+
+.model-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  margin-left: -6px;
+  padding: 2px 6px;
+  border: none;
+  border-radius: var(--md-sys-shape-corner-small);
+  background: transparent;
+  color: var(--md-sys-color-on-surface-variant);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.3;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.model-chip > span { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.model-chip md-icon { --md-icon-size: 16px; flex-shrink: 0; }
+.model-chip:hover { background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface); }
+.model-chip:disabled { opacity: 0.6; cursor: default; }
+
+.model-popup {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 8px;
+  z-index: 200;
+  width: min(340px, calc(100vw - 16px));
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+  background: var(--md-sys-color-surface-container-high);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-large);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  padding: 6px 0;
+  animation: popup-down 150ms var(--motion-easing-emphasized-decelerate);
+}
+
+@keyframes popup-down {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.model-popup .popup-header {
+  padding: 12px 16px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.model-option-text { min-width: 0; flex: 1; }
+.model-option-link { color: var(--md-sys-color-on-surface); }
+.model-option-link md-icon { --md-icon-size: 20px; color: var(--md-sys-color-on-surface-variant); flex-shrink: 0; }
+.model-manage { border-top: 1px solid var(--md-sys-color-outline-variant); margin-top: 6px; padding-top: 12px; }
+
+/* --- Welcome --- */
+.welcome-greeting {
+  background: none !important;
+  -webkit-text-fill-color: currentColor !important;
+  color: var(--md-sys-color-on-surface);
+  font-size: clamp(26px, 7.4vw, 44px);
+  line-height: 1.15;
+  letter-spacing: 0;
+  text-wrap: balance;
+  max-width: 14em;
+}
+.welcome-subtitle { font-size: 15px; text-wrap: balance; }
+.welcome-content { width: 100%; gap: 10px; padding: 0 4px; }
+.welcome-content .ai-setup { margin-top: 14px; }
+
+/* --- Composer --- */
+.chat-input-area { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+.chat-form { box-sizing: border-box; min-width: 0; }
+.input-toolbar { flex-wrap: nowrap; overflow: visible; }
+.input-toolbar > * { flex-shrink: 0; }
+.input-toolbar .toolbar-spacer { flex: 1 1 auto; min-width: 0; }
+
+/* Errors: calm outline instead of a red slab. */
+.chat-error {
+  background: transparent;
+  color: var(--md-sys-color-on-surface);
+  border: 1px solid color-mix(in srgb, var(--md-sys-color-error) 55%, transparent);
+  border-radius: var(--md-sys-shape-corner-medium);
+  width: 100%;
+  box-sizing: border-box;
+  line-height: 1.4;
+}
+.chat-error .error-icon { flex-shrink: 0; }
+.chat-messages > .ai-setup { margin-top: 4px; }
+
+/* Role-play actions (*smiles*) read as narration. */
+.bubble-model .message-text em {
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+@media (max-width: 599px) {
+  .chat-topbar { padding-left: 0; padding-right: 0; }
+  .model-popup { left: 8px; right: 8px; width: auto; }
+  .input-toolbar { gap: 0; padding: 2px 6px 6px; }
+  .chat-input { padding: 12px 14px 2px; }
+  .welcome-layout { padding: 12px 12px 0; }
+  .welcome-suggestions { margin-top: 18px; max-width: 340px; }
+}
+
+.topbar-avatar-btn {
+  border: none;
+  background: transparent;
+  padding: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
 }

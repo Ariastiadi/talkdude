@@ -2,10 +2,44 @@
 
 .settings-dialog {
   max-width: min(560px, calc(100vw - 32px));
+  width: 100%;
   max-height: calc(100vh - 48px);
   gap: 0;
   padding: 16px 20px 20px;
+  display: flex;
+  flex-direction: column;
 }
+
+/* Phones: full-screen page instead of a floating box. */
+@media (max-width: 599px) {
+  .settings-dialog {
+    max-width: none;
+    max-height: none;
+    width: 100vw;
+    height: 100%;
+    border-radius: 0;
+    padding: calc(8px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
+  }
+  .apikey-dialog-backdrop:has(.settings-dialog) { padding: 0; align-items: stretch; }
+}
+
+.settings-divider {
+  height: 1px;
+  background: var(--md-sys-color-outline-variant);
+  margin: 4px 0;
+}
+
+.device-model {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: var(--md-sys-shape-corner-medium);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  background: var(--md-sys-color-surface-container-low);
+}
+
+.device-model-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; color: var(--md-sys-color-on-surface); }
 
 .settings-head {
   display: flex;
@@ -16,33 +50,45 @@
 
 .settings-tabs {
   display: flex;
-  gap: 4px;
-  margin: 8px 0 12px;
-  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+  gap: 6px;
+  margin: 8px -20px 14px;
+  padding: 0 20px 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex-shrink: 0;
 }
+.settings-tabs::-webkit-scrollbar { display: none; }
 
 .settings-tab {
+  flex-shrink: 0;
   background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--md-sys-color-on-surface-variant);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-full);
+  color: var(--md-sys-color-on-surface);
   font: inherit;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
-  padding: 8px 12px;
+  padding: 7px 14px;
   cursor: pointer;
-  margin-bottom: -1px;
+  white-space: nowrap;
 }
 
 .settings-tab.active {
-  color: var(--md-sys-color-primary);
-  border-bottom-color: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+  background: var(--md-sys-color-primary);
+  border-color: var(--md-sys-color-primary);
+}
+
+@media (max-width: 599px) {
+  .settings-tabs { margin: 8px -16px 14px; padding: 0 16px 2px; }
 }
 
 .settings-body {
   overflow-y: auto;
   min-height: 160px;
+  flex: 1;
   padding-right: 2px;
+  overscroll-behavior: contain;
 }
 
 .settings-section {

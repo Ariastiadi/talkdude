@@ -6,7 +6,15 @@ import {
   theme, setTheme, safetyOff, setSafetyOff, setSettingsDialogOpen,
   autoFallback, setAutoFallback,
   providerUsable, type Provider, type ThemeMode,
+  settingsTab, setSettingsTab, type SettingsTab, makeModelId, DEVICE_PROVIDER_ID,
 } from "../lib/stores/settings";
+import {
+  LOCAL_MODELS, downloadedLocal, downloadProgress, downloadLocalModel, deleteLocalModel,
+  formatSize, localSupported,
+} from "../lib/api/local";
+import { selectedModel, chooseModel } from "../lib/stores/chat";
+import { modelUsable } from "../lib/stores/ai";
+import { DownloadBar } from "./AiSetup";
 import { testProvider, fetchModels } from "../lib/api/providers";
 import { persona, setPersona } from "../lib/stores/characters";
 import { platformOpenUrl } from "../lib/platform";
@@ -14,10 +22,17 @@ import "./SettingsDialog.css";
 
 const AISTUDIO_KEY_URL = "https://aistudio.google.com/app/apikey";
 
-type Tab = "gemini" | "providers" | "persona" | "appearance";
+const TABS: { key: SettingsTab; label: string }[] = [
+  { key: "device", label: "On-device" },
+  { key: "gemini", label: "Gemini" },
+  { key: "providers", label: "Providers" },
+  { key: "persona", label: "Persona" },
+  { key: "appearance", label: "Look" },
+];
 
 export default function SettingsDialog() {
-  const [tab, setTab] = createSignal<Tab>("gemini");
+  const tab = settingsTab;
+  const setTab = setSettingsTab;
   const close = () => setSettingsDialogOpen(false);
 
   return (
@@ -28,13 +43,15 @@ export default function SettingsDialog() {
             <h2 class="md-typescale-headline-small apikey-dialog-title">Settings</h2>
             <md-icon-button type="button" aria-label="Close" onClick={close}><md-icon>close</md-icon></md-icon-button>
           </div>
-          <div class="settings-tabs">
-            <button class={`settings-tab ${tab() === "gemini" ? "active" : ""}`} onClick={() => setTab("gemini")}>Gemini</button>
-            <button class={`settings-tab ${tab() === "providers" ? "active" : ""}`} onClick={() => setTab("providers")}>Other providers</button>
-            <button class={`settings-tab ${tab() === "persona" ? "active" : ""}`} onClick={() => setTab("persona")}>Persona</button>
-            <button class={`settings-tab ${tab() === "appearance" ? "active" : ""}`} onClick={() => setTab("appearance")}>Appearance</button>
+          <div class="settings-tabs" role="tablist">
+            <For each={TABS}>
+              {(t) => (
+                <button type="button" role="tab" class={`settings-tab ${tab() === t.key ? "active" : ""}`} onClick={() => setTab(t.key)}>{t.label}</button>
+              )}
+            </For>
           </div>
           <div class="settings-body">
+            <Show when={tab() === "device"}><DeviceTab /></Show>
             <Show when={tab() === "gemini"}><GeminiTab /></Show>
             <Show when={tab() === "providers"}><ProvidersTab /></Show>
             <Show when={tab() === "persona"}><PersonaTab /></Show>
@@ -43,6 +60,70 @@ export default function SettingsDialog() {
         </div>
       </div>
     </Portal>
+  );
+}
+
+// === On-device Tab ===
+
+function DeviceTab() {
+  const [error, setError] = createSignal<string | null>(null);
+  const get = async (key: string) => {
+    setError(null);
+    try {
+      await downloadLocalModel(key);
+      if (!modelUsable(selectedModel())) chooseModel(makeModelId(DEVICE_PROVIDER_ID, key));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+  return (
+    <div class="settings-section">
+      <p class="md-typescale-body-medium apikey-dialog-subtitle">
+        Run an AI directly on this device: no API key, no account, no limits, and it works offline after the download. Answers are simpler and slower than cloud models; bigger models are smarter but need more memory.
+      </p>
+      <Show when={!localSupported()}>
+        <div class="login-error md-typescale-body-small">This device's web view can't run on-device models.</div>
+      </Show>
+      <Show when={error()}><div class="login-error md-typescale-body-small">{error()}</div></Show>
+      <For each={LOCAL_MODELS}>
+        {(m) => {
+          const id = makeModelId(DEVICE_PROVIDER_ID, m.key);
+          const have = () => downloadedLocal().includes(m.key);
+          const busy = () => downloadProgress()[m.key] !== undefined;
+          return (
+            <div class="device-model">
+              <div class="device-model-head">
+                <div class="device-model-info">
+                  <div class="md-typescale-title-small">{m.name}</div>
+                  <div class="md-typescale-body-small settings-help">{m.note}</div>
+                  <div class="md-typescale-label-small settings-help">{formatSize(m.size)}{have() ? " · on this device" : ""}{selectedModel() === id ? " · in use" : ""}</div>
+                </div>
+              </div>
+              <Show when={busy()}><DownloadBar modelKey={m.key} /></Show>
+              <Show when={!busy()}>
+                <div class="settings-row">
+                  <Show when={have()} fallback={
+                    <button type="button" class="td-btn td-btn-outline td-btn-sm" disabled={!localSupported()} onClick={() => get(m.key)}>
+                      <md-icon>download</md-icon><span>Download</span>
+                    </button>
+                  }>
+                    <button type="button" class="td-btn td-btn-primary td-btn-sm" disabled={selectedModel() === id} onClick={() => chooseModel(id)}>
+                      <md-icon>check</md-icon><span>{selectedModel() === id ? "In use" : "Use"}</span>
+                    </button>
+                    <button type="button" class="td-btn td-btn-danger td-btn-sm" onClick={() => deleteLocalModel(m.key)}>
+                      <md-icon>delete</md-icon><span>Delete</span>
+                    </button>
+                  </Show>
+                </div>
+              </Show>
+            </div>
+          );
+        }}
+      </For>
+      <p class="md-typescale-body-small settings-help">
+        Models are downloaded once from Hugging Face and kept in talkdude's private storage. Qwen 2.5 is Apache-2.0; Llama 3.2 is under the Llama 3.2 Community License.
+      </p>
+    </div>
   );
 }
 
@@ -83,20 +164,18 @@ function GeminiTab() {
         <a href={AISTUDIO_KEY_URL} class="login-link" onClick={(e) => { e.preventDefault(); platformOpenUrl(AISTUDIO_KEY_URL); }}>Google AI Studio</a>
       </p>
       <div class="settings-row">
-        <md-filled-button type="submit" disabled={apiKeyLoading() || !value().trim()}>
-          <Show when={!apiKeyLoading()} fallback={<md-circular-progress indeterminate style={{ "--md-circular-progress-size": "24px" }}></md-circular-progress>}>
-            <md-icon slot="icon">key</md-icon>
-            {saved() ? "Saved" : "Save key"}
-          </Show>
-        </md-filled-button>
+        <button type="submit" class="td-btn td-btn-primary" disabled={apiKeyLoading() || !value().trim()}>
+          <md-icon>key</md-icon>
+          <span>{apiKeyLoading() ? "Checking…" : saved() ? "Saved" : "Save key"}</span>
+        </button>
         <Show when={apiKey()}>
-          <button type="button" class="login-text-btn login-text-btn-danger" onClick={async () => { setValue(""); await removeApiKey(); }} disabled={apiKeyLoading()}>
-            Remove key
+          <button type="button" class="td-btn td-btn-danger" onClick={async () => { setValue(""); await removeApiKey(); }} disabled={apiKeyLoading()}>
+            <span>Remove key</span>
           </button>
         </Show>
       </div>
 
-      <md-divider></md-divider>
+      <div class="settings-divider" />
 
       <label class="settings-toggle">
         <div>
@@ -229,7 +308,7 @@ function ProvidersTab() {
             <textarea class="api-key-input settings-textarea" rows={3} value={modelsText()} onInput={(e) => setModelsText(e.currentTarget.value)} />
           </label>
           <div class="settings-row">
-            <button type="button" class="login-text-btn login-text-btn-primary" onClick={loadModels} disabled={fetching() || !editing()!.baseUrl.trim()}>
+            <button type="button" class="td-btn td-btn-outline td-btn-sm" onClick={loadModels} disabled={fetching() || !editing()!.baseUrl.trim()}>
               {fetching() ? "Fetching…" : "Fetch model list"}
             </button>
             <label class="settings-inline-check md-typescale-body-small">
@@ -241,14 +320,14 @@ function ProvidersTab() {
             <div class={`md-typescale-body-small ${testResult()?.endsWith("✔") ? "settings-ok" : "login-error"}`} style={{ "white-space": "normal" }}>{testResult()}</div>
           </Show>
           <div class="settings-row">
-            <md-filled-button type="submit" disabled={!editing()!.name.trim() || !editing()!.baseUrl.trim() || !modelsText().trim()}>
-              <md-icon slot="icon">save</md-icon>
-              Save
-            </md-filled-button>
-            <button type="button" class="login-text-btn login-text-btn-primary" onClick={runTest} disabled={testing() || !editing()!.baseUrl.trim()}>
+            <button type="submit" class="td-btn td-btn-primary" disabled={!editing()!.name.trim() || !editing()!.baseUrl.trim() || !modelsText().trim()}>
+              <md-icon>save</md-icon>
+              <span>Save</span>
+            </button>
+            <button type="button" class="td-btn td-btn-outline" onClick={runTest} disabled={testing() || !editing()!.baseUrl.trim()}>
               {testing() ? "Testing…" : "Test connection"}
             </button>
-            <button type="button" class="login-text-btn" onClick={() => setEditing(null)}>Cancel</button>
+            <button type="button" class="td-btn td-btn-ghost" onClick={() => setEditing(null)}><span>Cancel</span></button>
           </div>
         </form>
       }>
@@ -268,10 +347,10 @@ function ProvidersTab() {
           )}
         </For>
         <div class="settings-row">
-          <md-filled-button type="button" onClick={() => setPresetOpen(!presetOpen())}>
-            <md-icon slot="icon">{presetOpen() ? "expand_less" : "add"}</md-icon>
-            Add provider
-          </md-filled-button>
+          <button type="button" class="td-btn td-btn-primary" onClick={() => setPresetOpen(!presetOpen())}>
+            <md-icon>{presetOpen() ? "expand_less" : "add"}</md-icon>
+            <span>Add provider</span>
+          </button>
         </div>
         <Show when={presetOpen()}>
             <div class="preset-menu">
@@ -341,10 +420,10 @@ function PersonaTab() {
         <textarea class="api-key-input settings-textarea" rows={4} maxLength={728} placeholder="e.g. I live in Jakarta, I like sci-fi and spicy food, I prefer short answers." value={desc()} onInput={(e) => setDesc(e.currentTarget.value)} />
       </label>
       <div class="settings-row">
-        <md-filled-button type="submit">
-          <md-icon slot="icon">save</md-icon>
-          {saved() ? "Saved" : "Save persona"}
-        </md-filled-button>
+        <button type="submit" class="td-btn td-btn-primary">
+          <md-icon>save</md-icon>
+          <span>{saved() ? "Saved" : "Save persona"}</span>
+        </button>
       </div>
     </form>
   );

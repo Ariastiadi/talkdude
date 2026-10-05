@@ -1,12 +1,70 @@
 .login-screen {
   display: flex;
-  align-items: center;
   justify-content: center;
   height: 100%;
   width: 100%;
   background: var(--md-sys-color-background);
-  padding: 24px;
+  padding: calc(24px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+  overflow-y: auto;
 }
+
+/* === First-run chooser === */
+
+.onboard {
+  width: 100%;
+  max-width: 460px;
+  margin: auto 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.onboard-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.onboard-head .login-logo { width: 64px; height: 64px; margin-bottom: 4px; }
+.onboard-head .login-icon { width: 32px; height: 32px; }
+.onboard-head .login-title { font-size: 40px; line-height: 1.1; }
+.onboard-head .login-subtitle { font-size: 15px; line-height: 1.45; margin: 0; }
+
+.onboard-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px;
+  border-radius: var(--md-sys-shape-corner-large);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  background: var(--md-sys-color-surface-container-low);
+}
+
+.onboard-card-title { margin: 2px 0 0; color: var(--md-sys-color-on-surface); }
+.onboard-card-text { margin: 0 0 6px; color: var(--md-sys-color-on-surface-variant); line-height: 1.45; }
+
+.onboard-key {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.onboard-key .api-key-input { flex: 1; min-width: 0; }
+.onboard-key .td-btn { flex-shrink: 0; }
+
+.onboard-link { align-self: flex-start; padding: 0 10px; margin-left: -10px; }
+
+.onboard-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  color: var(--md-sys-color-on-surface-variant);
+}
+.onboard-footer .td-btn { color: var(--md-sys-color-on-surface-variant); }
 
 .login-card {
   position: relative;
@@ -100,16 +158,18 @@
 .api-key-input {
   width: 100%;
   padding: 14px 16px;
-  border: 1.5px solid var(--md-sys-color-outline);
+  border: 1px solid var(--md-sys-color-outline-variant);
   border-radius: var(--md-sys-shape-corner-medium);
-  background: var(--md-sys-color-surface-container-highest);
+  background: var(--md-sys-color-surface-container);
   color: var(--md-sys-color-on-surface);
-  font-family: "Roboto Mono", monospace, system-ui;
-  font-size: 14px;
+  font-family: inherit;
+  font-size: 15px;
   outline: none;
   transition: border-color 0.15s;
   box-sizing: border-box;
 }
+
+.api-key-input[type="password"] { font-family: "Roboto Mono", ui-monospace, monospace; font-size: 14px; }
 
 .api-key-input:focus {
   border-color: var(--md-sys-color-primary);
@@ -222,7 +282,7 @@
 .apikey-dialog-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: rgba(0, 0, 0, 0.65);
   z-index: 1000;
   display: flex;
   align-items: center;
@@ -241,10 +301,12 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  background: var(--md-sys-color-surface-container-high);
+  background: var(--md-sys-color-surface-container);
+  border: 1px solid var(--md-sys-color-outline-variant);
   border-radius: var(--md-sys-shape-corner-extra-large);
   padding: 24px;
-  min-width: 320px;
+  min-width: 0;
+  box-sizing: border-box;
   max-width: min(480px, calc(100vw - 48px));
   width: 100%;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);

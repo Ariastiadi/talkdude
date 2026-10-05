@@ -1,18 +1,57 @@
 .sidebar {
   display: flex;
   flex-direction: column;
-  width: 300px;
+  width: 100%;
+  min-width: 0;
   height: 100%;
   background: var(--md-sys-color-surface-container-low);
+  border-right: 1px solid var(--md-sys-color-outline-variant);
   overflow: hidden;
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 .sidebar-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 16px 8px;
+  gap: 8px;
+  min-height: 60px;
+  padding: 6px 6px 6px 16px;
 }
+
+/* The close button only matters when the sidebar is an overlay. */
+@media (min-width: 900px) {
+  .sidebar-close { display: none; }
+}
+
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 8px 8px;
+}
+
+.sidebar-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: none;
+  border-radius: var(--md-sys-shape-corner-medium);
+  background: transparent;
+  color: var(--md-sys-color-on-surface);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+.sidebar-nav-item md-icon { --md-icon-size: 22px; }
+.sidebar-nav-item:hover { background: var(--md-sys-color-surface-container-high); }
 
 .sidebar-brand {
   display: flex;
@@ -34,7 +73,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 4px 12px 8px;
+  min-width: 0;
+  margin: 0 12px 8px;
   padding: 6px 12px;
   border-radius: var(--md-sys-shape-corner-full);
   background: var(--md-sys-color-surface-container);
@@ -423,9 +463,9 @@
 .footer-action-item {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 14px;
   width: 100%;
-  padding: 10px 12px;
+  padding: 9px 12px;
   border: none;
   background: transparent;
   color: var(--md-sys-color-on-surface-variant);
@@ -457,13 +497,33 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 16px;
+  gap: 8px;
+  width: 100%;
+  min-height: 52px;
+  padding: 8px 20px;
+  border: none;
+  background: transparent;
+  color: var(--md-sys-color-on-surface);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
+.sidebar-account:hover { background: var(--md-sys-color-surface-container); }
+.account-settings-icon { --md-icon-size: 22px; color: var(--md-sys-color-on-surface-variant); flex-shrink: 0; }
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--td-accent);
+}
+.status-dot.ok { background: var(--md-sys-color-on-surface); }
 
 .account-info {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
 }
 
