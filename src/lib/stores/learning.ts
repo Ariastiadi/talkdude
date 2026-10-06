@@ -23,13 +23,16 @@ export interface LearnedNote {
 
 const NOTES_KEY = "talkdude_learned_notes";
 const ENABLED_KEY = "talkdude_learning";
-export const MAX_NOTES = 200;
+/** Practically unlimited; only a safety net so one settings entry stays reasonable. */
+export const MAX_NOTES = 5000;
 
 const [notes, setNotesSignal] = createSignal<LearnedNote[]>([]);
 const [learningEnabled, setLearningEnabledSignal] = createSignal(true);
 /** Last note learned, for a small "Remembered: …" toast. */
 const [lastLearned, setLastLearned] = createSignal<string | null>(null);
-export { notes, learningEnabled, lastLearned, setLastLearned };
+/** Toast text for spoken commands ("save to memory", "forget …"). */
+const [memoryNotice, setMemoryNotice] = createSignal<string | null>(null);
+export { notes, learningEnabled, lastLearned, setLastLearned, memoryNotice, setMemoryNotice };
 
 async function persist(list: LearnedNote[]): Promise<void> {
   setNotesSignal(list);
@@ -73,7 +76,7 @@ function similarity(a: string, b: string): number {
 // === Editing ===
 
 export async function addNote(text: string): Promise<LearnedNote | null> {
-  const t = text.trim().replace(/\s+/g, " ").slice(0, 200);
+  const t = text.trim().replace(/\s+/g, " ").slice(0, 300);
   if (t.length < 4) return null;
   const list = notes().slice();
   const now = Date.now();
@@ -97,7 +100,7 @@ export async function addNote(text: string): Promise<LearnedNote | null> {
 }
 
 export async function updateNote(id: string, text: string): Promise<void> {
-  const t = text.trim().slice(0, 200);
+  const t = text.trim().slice(0, 300);
   if (!t) return deleteNote(id);
   await persist(notes().map((n) => (n.id === id ? { ...n, text: t, updatedAt: Date.now() } : n)));
 }
@@ -112,15 +115,25 @@ export async function clearNotes(): Promise<void> {
 
 // === Using notes in a chat ===
 
-/** The notes most relevant to what the user just said, plus the newest ones. */
+/**
+ * The notes most relevant to what the user just said, plus the newest ones.
+ * Keyword match weighted by how rare each word is across all notes (BM25-like),
+ * so "Bandung" counts for more than "like"; recent and often-used notes get a small boost.
+ */
 export function relevantNotes(query: string, limit: number): LearnedNote[] {
   const list = notes();
   if (!list.length) return [];
   const q = new Set(words(query));
   const now = Date.now();
-  const scored = list.map((n) => {
+  const noteWords = list.map((n) => new Set(words(n.text)));
+  const df = new Map<string, number>();
+  for (const ws of noteWords) for (const w of ws) df.set(w, (df.get(w) ?? 0) + 1);
+  const N = list.length;
+  const scored = list.map((n, i) => {
     let overlap = 0;
-    for (const w of words(n.text)) if (q.has(w)) overlap++;
+    for (const w of noteWords[i]) {
+      if (q.has(w)) overlap += Math.log(1 + (N - (df.get(w) ?? 0) + 0.5) / ((df.get(w) ?? 0) + 0.5));
+    }
     const ageDays = (now - n.updatedAt) / 86_400_000;
     return { n, score: overlap * 3 + Math.max(0, 2 - ageDays / 15) + Math.min(n.uses, 20) * 0.05 };
   });
@@ -138,6 +151,35 @@ export function buildLearnedPrompt(query: string, limit = 12): string | undefine
   void persist(notes().map((n) => (ids.has(n.id) ? { ...n, uses: n.uses + 1 } : n)));
   return "[What you know about the user from earlier chats — use it naturally, don't list it back]\n" +
     picked.map((p) => `- ${p.text}`).join("\n");
+}
+
+// === Spoken commands: "save to memory", "forget …" ===
+
+/** Saves a fact the user asked to be remembered. Returns the saved text, or null. */
+export async function rememberOnRequest(text: string): Promise<string | null> {
+  const note = await addNote(text);
+  if (!note) return null;
+  setMemoryNotice(`Saved to memory: ${note.text.length > 70 ? note.text.slice(0, 67) + "…" : note.text}`);
+  return note.text;
+}
+
+/** Removes the saved note that best matches `query`. Returns the removed text, or null. */
+export async function forgetOnRequest(query: string): Promise<string | null> {
+  const q = new Set(words(query));
+  if (!q.size) return null;
+  let best: { n: LearnedNote; score: number } | null = null;
+  for (const n of notes()) {
+    const nw = words(n.text);
+    if (!nw.length) continue;
+    let hit = 0;
+    for (const w of nw) if (q.has(w)) hit++;
+    const score = hit / Math.min(q.size, nw.length);
+    if (hit > 0 && (!best || score > best.score)) best = { n, score };
+  }
+  if (!best || best.score < 0.5) return null;
+  await deleteNote(best.n.id);
+  setMemoryNotice(`Removed from memory: ${best.n.text.length > 70 ? best.n.text.slice(0, 67) + "…" : best.n.text}`);
+  return best.n.text;
 }
 
 // === Learning ===
