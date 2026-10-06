@@ -53,7 +53,7 @@ import { apiKey } from "../lib/stores/auth";
 import { hasUsableAI } from "../lib/stores/ai";
 import { downloadedLocal, downloadProgress, loadingLocal, localModelInfo, DEFAULT_LOCAL_MODEL } from "../lib/api/local";
 import AiSetupCard from "./AiSetup";
-import { lastLearned, setLastLearned } from "../lib/stores/learning";
+import { lastLearned, setLastLearned, memoryNotice, setMemoryNotice } from "../lib/stores/learning";
 import type { Message, MessagePart } from "../lib/db";
 import { AVAILABLE_MODELS, modelSupportsCodeExecution, modelSupportsUrlContext } from "../lib/api/types";
 import { renderMarkdown } from "../lib/markdown";
@@ -294,8 +294,8 @@ export default function ChatView() {
     return modelLabel(id);
   };
 
-  // Gemini-only features (Files API attachments, Google Search, URL Context,
-  // Code Execution) are hidden when another provider's model is selected.
+  // Only Gemini uses its own Files API / Google Search / Code Execution; other models
+  // get attachments, web search and link reading done by the app itself.
   const isGemini = () => isGeminiModelId(selectedModel()) && !!apiKey();
   const setupNeeded = () => !hasUsableAI() || downloadProgress()[DEFAULT_LOCAL_MODEL] !== undefined;
 
@@ -520,6 +520,11 @@ export default function ChatView() {
     setLastLearned(null);
   });
 
+  createEffect(() => {
+    const t = memoryNotice();
+    if (t) { showSnackbar(t); setMemoryNotice(null); }
+  });
+
   // Save a base64 inline image to Downloads.
   //
   // Android: uses MediaStore (tauri-plugin-android-fs) because scoped storage
@@ -626,12 +631,13 @@ export default function ChatView() {
 
     // For user messages, separate file attachments (inlineData/fileData) from text parts
     const userAttachParts = () =>
-      isUser ? msg.parts.filter((p) => p.type === "inlineData" || p.type === "fileData") as (
+      isUser ? msg.parts.filter((p) => p.type === "inlineData" || p.type === "fileData" || p.type === "fileText") as (
         | { type: "inlineData"; mimeType: string; data: string; label?: string }
         | { type: "fileData"; mimeType: string; fileUri: string; expiresAt: number; apiKeyHint: string; fileName: string; preview?: string }
+        | { type: "fileText"; name: string; mimeType: string; text: string; truncated?: boolean }
       )[] : [];
     const userTextParts = () =>
-      isUser ? msg.parts.filter((p) => p.type !== "inlineData" && p.type !== "fileData") : [];
+      isUser ? msg.parts.filter((p) => p.type !== "inlineData" && p.type !== "fileData" && p.type !== "fileText") : [];
 
     return (
       <div class={`message ${isUser ? "message-user" : "message-model"}`}>
@@ -651,8 +657,8 @@ export default function ChatView() {
                   // fileData parts use the stored preview thumbnail; inlineData parts have the full base64
                   const imgSrc = part.type === "fileData"
                     ? part.preview
-                    : `data:${part.mimeType};base64,${part.data}`;
-                  const name = part.type === "fileData" ? part.fileName : (part.label || info.label);
+                    : part.type === "inlineData" ? `data:${part.mimeType};base64,${part.data}` : undefined;
+                  const name = part.type === "fileData" ? part.fileName : part.type === "fileText" ? part.name : (part.label || info.label);
                   return (
                     <div class="user-attach-item">
                       <Show
@@ -986,8 +992,8 @@ export default function ChatView() {
           </div>
         </div>
         <div class="input-toolbar">
-          {/* Attach button (Gemini Files API only) */}
-          <Show when={isGemini()}>
+          {/* Attach button: every model (Gemini uses its Files API, others read files on the device) */}
+          <Show when={true}>
             <md-icon-button
               type="button"
               aria-label="Attach files"
@@ -1001,13 +1007,15 @@ export default function ChatView() {
             ref={fileInputRef}
             type="file"
             multiple
-            accept="image/*,video/*,audio/*,application/pdf,text/*,.py,.js,.ts,.json,.csv,.md,.xml,.html,.rtf,.epub"
+            accept={isGemini()
+              ? "image/*,video/*,audio/*,application/pdf,text/*,.py,.js,.ts,.json,.csv,.md,.xml,.html,.rtf,.epub"
+              : "image/*,application/pdf,.docx,text/*,.py,.js,.ts,.tsx,.json,.csv,.md,.xml,.html,.java,.kt,.c,.cpp,.go,.rs,.sql,.yml,.yaml,.log"}
             style="display:none"
             onChange={handleFileSelect}
           />
 
-          {/* Tools button (Gemini only) */}
-          <Show when={isGemini()}>
+          {/* Tools: web search and link reading for every model; code execution is Gemini-only */}
+          <Show when={true}>
           <div class="toolbar-menu-anchor">
             <md-icon-button
               type="button"
@@ -1025,7 +1033,7 @@ export default function ChatView() {
                 <div class="popup-header md-typescale-title-small">Tools</div>
                 <label class="tool-toggle">
                   <md-icon>travel_explore</md-icon>
-                  <span>Google Search</span>
+                  <span>{isGeminiModelId(selectedModel()) ? "Google Search" : "Web search"}</span>
                   <input
                     type="checkbox"
                     checked={searchEnabled()}
@@ -1036,10 +1044,10 @@ export default function ChatView() {
                   </span>
                 </label>
                 {/* URL Context is not supported by all models (e.g. Gemma 4). */}
-                <Show when={modelSupportsUrlContext(selectedModel())}>
+                <Show when={!isGeminiModelId(selectedModel()) || modelSupportsUrlContext(selectedModel())}>
                   <label class="tool-toggle">
                     <md-icon>link</md-icon>
-                    <span>URL Context</span>
+                    <span>{isGeminiModelId(selectedModel()) ? "URL Context" : "Read links"}</span>
                     <input
                       type="checkbox"
                       checked={urlContextEnabled()}
@@ -1050,7 +1058,7 @@ export default function ChatView() {
                     </span>
                   </label>
                 </Show>
-                <Show when={modelSupportsCodeExecution(selectedModel())}>
+                <Show when={isGeminiModelId(selectedModel()) && modelSupportsCodeExecution(selectedModel())}>
                   <label class="tool-toggle">
                     <md-icon>code</md-icon>
                     <span>Code Execution</span>
