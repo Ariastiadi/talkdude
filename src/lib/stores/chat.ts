@@ -13,7 +13,11 @@ import type {
 import { DEFAULT_MODEL_ID, TITLE_MODEL, modelSupportsCodeExecution, modelSupportsUrlContext } from "../api/types";
 import { getActiveSystemInstruction } from "./custom-instructions";
 import { isGeminiModelId, isDeviceModelId, persistSelectedModel, loadSelectedModel } from "./settings";
-import { buildLearnedPrompt, learnFromMessage } from "./learning";
+import { buildLearnedPrompt, learnFromMessage, learningEnabled, rememberOnRequest, forgetOnRequest } from "./learning";
+import { parseMemoryCommand, type MemoryCommand } from "../memory-commands";
+import { readLocalFile, fileForModel } from "../attachments";
+import { buildWebContext, type WebBudget } from "../webtools";
+import { isMobile } from "../platform";
 import {
   getCharacter, buildCharacterPrompt, buildPersonaPrompt, buildMemoryPrompt, fillNames, MAX_MEMORIES,
 } from "./characters";
@@ -38,6 +42,11 @@ export interface FileAttachment {
   expiresAt?: number;      // Unix timestamp (ms) when the uploaded file expires
   apiKeyHint?: string;     // key identifier used at upload time for change detection
   uploadError?: string;    // error message if the upload failed or the file is invalid
+  // Files read on the device (used for every model that isn't Gemini with a key)
+  localKind?: "text" | "image";
+  localText?: string;
+  localData?: string;      // base64 JPEG for images
+  localTruncated?: boolean;
 }
 
 // === State ===
@@ -208,6 +217,11 @@ export function restoreAttachments(atts: FileAttachment[]): void {
  */
 export async function addAttachment(file: File): Promise<void> {
   setFileUploadError(null);
+  // Gemini (with a key) keeps using the Files API; every other model reads the file on the device.
+  if (!isGeminiModelId(selectedModel()) || (await getCurrentApiKeyHint()) === null) {
+    await addLocalAttachment(file);
+    return;
+  }
   const mimeType = file.type || "application/octet-stream";
   const isImage = mimeType.startsWith("image/");
 
@@ -276,7 +290,27 @@ export function loadAttachmentsFromParts(parts: MessagePart[]): void {
   const now = Date.now();
   const atts: FileAttachment[] = [];
   for (const part of parts) {
-    if (part.type === "fileData") {
+    if (part.type === "fileText") {
+      atts.push({
+        id: crypto.randomUUID(),
+        file: new File([part.text], part.name, { type: part.mimeType }),
+        mimeType: part.mimeType,
+        uploading: false,
+        localKind: "text",
+        localText: part.text,
+        localTruncated: part.truncated,
+      });
+    } else if (part.type === "inlineData" && part.label) {
+      atts.push({
+        id: crypto.randomUUID(),
+        file: new File([], part.label, { type: part.mimeType }),
+        mimeType: part.mimeType,
+        preview: `data:${part.mimeType};base64,${part.data}`,
+        uploading: false,
+        localKind: "image",
+        localData: part.data,
+      });
+    } else if (part.type === "fileData") {
       const isImage = part.mimeType.startsWith("image/");
       const expired = part.expiresAt <= now;
       atts.push({
@@ -294,6 +328,81 @@ export function loadAttachmentsFromParts(parts: MessagePart[]): void {
     }
   }
   setPendingAttachments(atts);
+}
+
+
+/** Reads a file on the device so any model can use it (text, PDF, Word, code, pictures). */
+async function addLocalAttachment(file: File): Promise<void> {
+  try {
+    const lf = await readLocalFile(file);
+    if (lf.kind === "image" && isDeviceModelId(selectedModel())) {
+      throw new Error("The on-device AI can't see pictures yet. Switch to a cloud model (Gemini, GPT, Claude…) to send images, or attach a text file.");
+    }
+    const att: FileAttachment = {
+      id: crypto.randomUUID(),
+      file,
+      mimeType: lf.mimeType,
+      uploading: false,
+      localKind: lf.kind,
+      ...(lf.kind === "image"
+        ? { preview: lf.preview, localData: lf.data }
+        : { localText: lf.text, localTruncated: lf.truncated }),
+    };
+    setPendingAttachments(produce((draft) => draft.push(att)));
+  } catch (err) {
+    setFileUploadError(err instanceof Error ? err.message : "Couldn't read this file.");
+  }
+}
+
+/** Message part for a file that was read on the device (null for Files API uploads). */
+function localAttachmentPart(att: FileAttachment): MessagePart | null {
+  if (att.localKind === "image" && att.localData) {
+    return { type: "inlineData", mimeType: att.mimeType, data: att.localData, label: att.file.name };
+  }
+  if (att.localKind === "text" && att.localText !== undefined) {
+    return { type: "fileText", name: att.file.name, mimeType: att.mimeType, text: att.localText, ...(att.localTruncated ? { truncated: true } : {}) };
+  }
+  return null;
+}
+
+/** How many characters of an attached file the current model can take. */
+function fileCharBudget(): number {
+  if (isDeviceModelId(selectedModel())) return isMobile() ? 2500 : 6000;
+  return 60_000;
+}
+
+/** Size limits for web results by model: small on-device models get less. */
+function webBudget(): WebBudget {
+  if (isDeviceModelId(selectedModel())) {
+    return isMobile() ? { results: 1500, page: 1200, openPages: 0 } : { results: 3500, page: 2500, openPages: 1 };
+  }
+  return { results: 6000, page: 9000, openPages: 2 };
+}
+
+// === Spoken memory commands ("save to memory") ===
+
+const memoryHints = new Map<string, string>();
+
+async function handleMemoryCommand(cmd: MemoryCommand, msgs: Message[]): Promise<string> {
+  if (!learningEnabled()) {
+    return "The user asked you to change your memory, but memory is switched off. Tell them briefly they can turn it on in Settings → Memory.";
+  }
+  if (cmd.action === "save") {
+    let content = cmd.content;
+    if (!content) {
+      // "Save this to memory" with nothing after it: use the message before.
+      const prev = [...msgs].reverse().slice(1).find((m) => m.role === "user" && m.parts.some((p) => p.type === "text"));
+      content = prev ? prev.parts.filter((p) => p.type === "text").map((p) => (p as { text: string }).text).join(" ").slice(0, 300) : "";
+    }
+    const saved = content ? await rememberOnRequest(content) : null;
+    return saved
+      ? `The user asked you to remember this, and it is now saved to your memory: "${saved}". Confirm in one short sentence, in the user's language.`
+      : "The user asked you to save something to memory but gave nothing to save. Ask briefly what to remember.";
+  }
+  const removed = await forgetOnRequest(cmd.content);
+  return removed
+    ? `The user asked you to forget this, and it has been removed from your memory: "${removed}". Confirm in one short sentence, in the user's language.`
+    : `The user asked you to forget "${cmd.content}", but nothing like that is saved. Say so briefly.`;
 }
 
 // === Actions ===
@@ -908,6 +1017,8 @@ export async function editMessage(messageId: string, newText: string, newAttachm
     const currentKeyHint = await getCurrentApiKeyHint();
     for (const att of newAttachments) {
       if (att.uploading || att.uploadError) continue;
+      const localPart = localAttachmentPart(att);
+      if (localPart) { userParts.push(localPart); continue; }
       if (att.fileUri && att.expiresAt && att.expiresAt > now && att.apiKeyHint === currentKeyHint) {
         userParts.push({
           type: "fileData",
@@ -1052,6 +1163,8 @@ function buildContentsFromMessages(msgs: Message[], currentApiKeyHint: string | 
             };
           case "inlineData":
             return { inlineData: { mimeType: p.mimeType, data: p.data } };
+          case "fileText":
+            return { text: fileForModel(p.name, p.text, fileCharBudget()) };
           case "fileData": {
             // Drop expired files; their content is gone from the Files API.
             if (p.expiresAt <= now) return null;
@@ -1113,13 +1226,16 @@ function buildContentsFromMessages(msgs: Message[], currentApiKeyHint: string | 
  * Call after model selection changes or when restoring per-conversation settings.
  */
 export function clampUrlContextForModel(modelId: string): void {
-  if (!modelSupportsUrlContext(modelId) && urlContextEnabled()) {
+  // Other providers read links themselves, so only Gemini models can lack the feature.
+  if (isGeminiModelId(modelId) && !modelSupportsUrlContext(modelId) && urlContextEnabled()) {
     setUrlContextEnabled(false);
   }
 }
 
 function buildActiveTools(): GeminiTool[] {
   const tools: GeminiTool[] = [];
+  // Search and links for other models are done by the app (webtools.ts), not by the provider.
+  if (!isGeminiModelId(selectedModel())) return tools;
   if (searchEnabled()) {
     tools.push({ googleSearch: {} as Record<string, never> });
   }
@@ -1270,6 +1386,7 @@ async function startStream(
   const collectedCodeBlocks: { language: string; code: string }[] = [];
   const collectedCodeResults: { outcome: string; output: string }[] = [];
   let groundingResult: { queries: string[]; sources: { uri: string; title: string }[] } | null = null;
+  let skipLearning = false;
 
   // Register background stream
   backgroundStreams.set(convId, { abortController: controller, fullText: "", fullThinking: "", branchCtx });
@@ -1466,7 +1583,7 @@ async function startStream(
           generateTitle(userText, fullText, convId);
         }
         // Learn durable facts about the user from normal chats (best-effort, in the background).
-        if (fullText && !isCharacterChat) {
+        if (fullText && !isCharacterChat && !skipLearning) {
           void learnFromMessage(convId, userText, async (prompt) => {
             const learnModel = isGeminiModelId(model) ? TITLE_MODEL : model;
             const r = await sendChat(learnModel, [{ role: "user", parts: [{ text: prompt }] }], { maxOutputTokens: 160 });
@@ -1495,8 +1612,25 @@ async function startStream(
   };
 
   try {
+    skipLearning = memoryHints.has(convId);
     const sys = buildSystemFor(convId, userText);
-    await streamChat(model, contents, generationConfig, sys.text, callbacks, controller.signal, tools, { replaceBase: sys.replaceBase });
+    let systemText = sys.text;
+
+    // Web search / link reading for models other than Gemini: the app looks things up itself.
+    if (!isGeminiModelId(model) && (searchEnabled() || urlContextEnabled()) && userText.trim()) {
+      if (isViewing()) setStreamingText("_Looking it up on the web…_");
+      const web = await buildWebContext(userText, {
+        search: searchEnabled(),
+        links: urlContextEnabled(),
+        budget: webBudget(),
+        signal: controller.signal,
+      });
+      if (web.text) systemText = [systemText, web.text].filter(Boolean).join("\n\n");
+      if (web.sources.length > 0) groundingResult = { queries: web.queries, sources: web.sources };
+      if (isViewing() && !fullText) setStreamingText("");
+    }
+
+    await streamChat(model, contents, generationConfig, systemText, callbacks, controller.signal, tools, { replaceBase: sys.replaceBase });
   } catch (err) {
     // Network error: streamChat threw before callbacks fired.
     backgroundStreams.delete(convId);
@@ -1537,6 +1671,8 @@ export async function sendMessage(text: string): Promise<void> {
   const attachments = [...pendingAttachments];
   for (const att of attachments) {
     if (att.uploading || att.uploadError) continue;
+    const localPart = localAttachmentPart(att);
+    if (localPart) { userParts.push(localPart); continue; }
     if (att.fileUri && att.expiresAt && att.expiresAt > now && att.apiKeyHint === currentKeyHint) {
       userParts.push({
         type: "fileData",
@@ -1569,6 +1705,11 @@ export async function sendMessage(text: string): Promise<void> {
 
   const allMsgs = await db.messages.where("conversationId").equals(convId).sortBy("createdAt");
   const contents = buildContentsFromMessages(allMsgs, currentKeyHint);
+
+  // "Save to memory" / "forget …": handle it, then let the AI confirm naturally.
+  const isCharChat = !!conversations.find((c) => c.id === convId)?.characterId;
+  const memCmd = parseMemoryCommand(text, !isCharChat);
+  if (memCmd) memoryHints.set(convId, await handleMemoryCommand(memCmd, allMsgs));
 
   await startStream(convId, contents, text, allMsgs.length, undefined, async () => {
     // Remove orphaned user message from DB and store
@@ -1605,12 +1746,16 @@ const swipeStash = new Map<string, MessagePart[][]>();
 function buildSystemFor(convId: string, userText = ""): { text: string | undefined; replaceBase: boolean } {
   const conv = conversations.find((c) => c.id === convId);
   const character = getCharacter(conv?.characterId);
+  const hint = memoryHints.get(convId);
+  memoryHints.delete(convId);
   const blocks = [
     character ? buildCharacterPrompt(character) : undefined,
+    character ? undefined : `Current date and time: ${new Date().toLocaleString("en-GB", { dateStyle: "full", timeStyle: "short" })}.`,
     buildPersonaPrompt(),
     buildLearnedPrompt(userText, isDeviceModelId(selectedModel()) ? 6 : 12),
     buildMemoryPrompt(conv?.memories),
     getActiveSystemInstruction(),
+    hint ? `[Memory update] ${hint}` : undefined,
   ].filter((b): b is string => !!b && b.trim().length > 0);
   return { text: blocks.length ? blocks.join("\n\n") : undefined, replaceBase: !!character };
 }
