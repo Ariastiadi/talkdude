@@ -15,7 +15,7 @@ import {
 import { selectedModel, chooseModel } from "../lib/stores/chat";
 import { modelUsable } from "../lib/stores/ai";
 import { DownloadBar } from "./AiSetup";
-import { notes, learningEnabled, setLearningEnabled, addNote, updateNote, deleteNote, clearNotes, MAX_NOTES } from "../lib/stores/learning";
+import { notes, learningEnabled, setLearningEnabled, addNote, updateNote, deleteNote, clearNotes } from "../lib/stores/learning";
 import { testProvider, fetchModels } from "../lib/api/providers";
 import { persona, setPersona } from "../lib/stores/characters";
 import { platformOpenUrl } from "../lib/platform";
@@ -73,6 +73,13 @@ function MemoryTab() {
   const [editing, setEditing] = createSignal<string | null>(null);
   const [editText, setEditText] = createSignal("");
   const [confirmClear, setConfirmClear] = createSignal(false);
+  const [noteFilter, setNoteFilter] = createSignal("");
+  const [showAllNotes, setShowAllNotes] = createSignal(false);
+  const filteredNotes = () => {
+    const q = noteFilter().trim().toLowerCase();
+    return q ? notes().filter((n) => n.text.toLowerCase().includes(q)) : notes();
+  };
+  const visibleNotes = () => (showAllNotes() ? filteredNotes() : filteredNotes().slice(0, 60));
   return (
     <div class="settings-section">
       <p class="md-typescale-body-medium apikey-dialog-subtitle">
@@ -90,11 +97,14 @@ function MemoryTab() {
         <input class="api-key-input" placeholder="Add something to remember, e.g. “I prefer short answers”" value={draft()} onInput={(e) => setDraft(e.currentTarget.value)} />
         <button type="submit" class="td-btn td-btn-primary td-btn-sm" disabled={draft().trim().length < 4}><span>Add</span></button>
       </form>
-      <div class="md-typescale-label-medium settings-help">{notes().length} of {MAX_NOTES} notes</div>
+      <div class="md-typescale-label-medium settings-help">{notes().length} {notes().length === 1 ? "note" : "notes"} saved. You can also say “save to memory: …” or “forget …” in any chat.</div>
+      <Show when={notes().length > 8}>
+        <input class="api-key-input" placeholder="Search notes" value={noteFilter()} onInput={(e) => { setNoteFilter(e.currentTarget.value); setShowAllNotes(false); }} />
+      </Show>
       <Show when={notes().length === 0}>
         <p class="md-typescale-body-small settings-help">Nothing learned yet. Just chat — try telling talkdude your name or what you're working on.</p>
       </Show>
-      <For each={notes()}>
+      <For each={visibleNotes()}>
         {(n) => (
           <div class="memory-item md-typescale-body-small">
             <Show when={editing() === n.id} fallback={<span>{n.text}</span>}>
@@ -110,6 +120,11 @@ function MemoryTab() {
           </div>
         )}
       </For>
+      <Show when={!showAllNotes() && filteredNotes().length > 60}>
+        <div class="settings-row">
+          <button type="button" class="td-btn td-btn-sm" onClick={() => setShowAllNotes(true)}><span>Show all {filteredNotes().length}</span></button>
+        </div>
+      </Show>
       <Show when={notes().length > 0}>
         <div class="settings-row">
           <button type="button" class="td-btn td-btn-danger td-btn-sm" onClick={async () => { if (confirmClear()) { await clearNotes(); setConfirmClear(false); } else setConfirmClear(true); }}>
