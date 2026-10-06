@@ -94,6 +94,7 @@ export type MessagePart =
       /** Data URL thumbnail (images only, kept for UI display). */
       preview?: string;
     }
+  | { type: "fileText"; name: string; mimeType: string; text: string; truncated?: boolean }
   | { type: "functionCall"; name: string; args: Record<string, unknown>; id?: string }
   | { type: "functionResponse"; name: string; id?: string; response: unknown }
   | { type: "searchGrounding"; queries: string[]; sources: { uri: string; title: string }[] }
