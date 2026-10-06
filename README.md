@@ -15,7 +15,7 @@
 
 ---
 
-> **New in 1.1: chat without any API key.** talkdude can now download a small AI model once and run it right on your phone or PC. No key, no sign-up, no limits, and it keeps working without internet.
+> **New in 1.4: say “save to memory”, and use files, links and web search with any AI.** Earlier, in 1.1: chat without any API key. talkdude can now download a small AI model once and run it right on your phone or PC. No key, no sign-up, no limits, and it keeps working without internet.
 
 <p align="center">
   <img src="docs/screenshots/welcome.png" width="200" alt="Choose how talkdude thinks" />
@@ -38,7 +38,8 @@ Your chats are stored only on your device. talkdude has no server of its own.
 
 - **Works with no key at all.** Download Qwen 2.5 0.5B (398 MB), Llama 3.2 1B (808 MB) or Qwen 2.5 1.5B (986 MB) once, then chat as much as you like, even in airplane mode.
 - **Small.** The Android APK is about 8 MB, with a fast native llama.cpp engine built in; models are downloaded only if you use them.
-- **Learns from your chats.** talkdude notes what you tell it about yourself (name, interests, plans, how you like answers) and gives the relevant notes to the AI in every chat, so the built-in AI gets more personal over time. See, edit or delete everything it learned in Settings → Memory.
+- **Memory, like ChatGPT, Gemini and Claude.** talkdude notes what you tell it about yourself (name, interests, plans, how you like answers), and you can say it out loud too: *“save to memory: I live in Bandung”*, *“ingat ya, aku suka kopi”*, *“forget that”*. The relevant notes go to the AI in every chat, so even the built-in AI gets more personal over time. No limit on notes. See, search, edit or delete everything in Settings → Memory.
+- **Files, links and web search for every AI.** Attach pictures, PDF, Word (.docx), text and code files to any model, including the on-device one (pictures need a model that can see). Switch on **Web search** or **Read links** in the Tools menu and talkdude looks things up itself (DuckDuckGo, with Wikipedia as backup) and hands the results to the AI. No key needed. Code execution stays Gemini-only.
 - **Many providers in one model picker.** Gemini and Gemma, Claude, OpenAI, Groq, OpenRouter, DeepSeek, Mistral, Ollama, or any OpenAI-compatible server.
 - **No chat limits.** talkdude never counts your messages. When a cloud model hits its free-tier limit, the reply continues on the next model you've set up.
 - **Create a Chat AI.** Make your own AI in three steps: a name and photo (or emoji), a personality (pick traits like witty or caring, what they are to you, how they talk, plus your own description) and a first message.
@@ -46,7 +47,7 @@ Your chats are stored only on your device. talkdude has no server of its own.
 - **Role-play tools.** Swipe between alternative replies (`< 2/3 >`), edit any AI reply to steer the story, and pin up to 15 memories per chat so the AI never forgets them. Your persona fills in `{{user}}`.
 - **Optional content filter.** Gemini's safety filters can be switched off in Settings for adults. Each provider's own policies still apply.
 - **Export and backup.** Export a chat to Markdown, back up every chat and character to one JSON file, and restore it any time. API keys are never written to backups.
-- **Gemini extras.** File attachments, Google Search, code execution and adjustable thinking.
+- **Gemini extras.** Google's own file uploads, Google Search, code execution and adjustable thinking.
 - **Nothing-inspired look.** Black and white, a single red dot, dot-matrix headings. Dark, light or follow the system.
 
 ## Privacy
@@ -54,6 +55,7 @@ Your chats are stored only on your device. talkdude has no server of its own.
 - Conversations, characters and settings are stored locally (IndexedDB). There is no talkdude account or server.
 - On-device models run entirely on your device. After the one-time download (engine from the jsDelivr npm CDN, checked against a built-in SHA-256 hash; model from Hugging Face), nothing you type leaves the device.
 - When you use a cloud provider, your messages go straight from the app to that provider with your own key, under that provider's privacy policy.
+- Web search and Read links are off until you switch them on. When on, the words you search for are sent to DuckDuckGo (or Wikipedia) and the pages you link are fetched from their websites. Attached files are read on your device and sent only to the AI you chose.
 - No ads, no trackers, no analytics. The code is open for anyone to check.
 
 ## Install

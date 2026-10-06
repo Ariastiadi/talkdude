@@ -47,3 +47,7 @@ SOFTWARE.
 On-device models run with [wllama](https://github.com/ngxson/wllama) (MIT, © 2024 Xuan Son Nguyen), a WebAssembly build of [llama.cpp](https://github.com/ggml-org/llama.cpp) (MIT, © The ggml authors). Their WebAssembly binary is bundled with the app.
 
 Model weights are not bundled. They are downloaded on request from Hugging Face and keep their own licenses: Qwen 2.5 (Apache-2.0) and Llama 3.2 (Llama 3.2 Community License, "Built with Llama").
+
+## PDF.js
+
+PDF text is read with [PDF.js](https://github.com/mozilla/pdf.js) by Mozilla and contributors, licensed under the Apache License 2.0. It is loaded only when you attach a PDF.
