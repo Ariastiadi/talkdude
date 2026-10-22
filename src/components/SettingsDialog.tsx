@@ -10,6 +10,7 @@ import {
 } from "../lib/stores/settings";
 import {
   LOCAL_MODELS, downloadedLocal, downloadProgress, downloadLocalModel, deleteLocalModel,
+  visionLocal, visionKey, downloadLocalVision, deleteLocalVision, suggestedLocalModel, cancelLocalDownload,
   formatSize, localSupported,
 } from "../lib/api/local";
 import { selectedModel, chooseModel } from "../lib/stores/chat";
@@ -149,6 +150,11 @@ function DeviceTab() {
       setError(e instanceof Error ? e.message : String(e));
     }
   };
+  const run = async (f: () => Promise<void>) => {
+    setError(null);
+    try { await f(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  };
+  const suggested = suggestedLocalModel();
   return (
     <div class="settings-section">
       <p class="md-typescale-body-medium apikey-dialog-subtitle">
@@ -167,7 +173,7 @@ function DeviceTab() {
             <div class="device-model">
               <div class="device-model-head">
                 <div class="device-model-info">
-                  <div class="md-typescale-title-small">{m.name}</div>
+                  <div class="md-typescale-title-small">{m.name}{m.key === suggested ? " · recommended for this device" : ""}</div>
                   <div class="md-typescale-body-small settings-help">{m.note}</div>
                   <div class="md-typescale-label-small settings-help">{formatSize(m.size)}{have() ? " · on this device" : ""}{selectedModel() === id ? " · in use" : ""}</div>
                 </div>
@@ -183,18 +189,40 @@ function DeviceTab() {
                     <button type="button" class="td-btn td-btn-primary td-btn-sm" disabled={selectedModel() === id} onClick={() => chooseModel(id)}>
                       <md-icon>check</md-icon><span>{selectedModel() === id ? "In use" : "Use"}</span>
                     </button>
-                    <button type="button" class="td-btn td-btn-danger td-btn-sm" onClick={() => deleteLocalModel(m.key)}>
+                    <button type="button" class="td-btn td-btn-danger td-btn-sm" onClick={() => run(() => deleteLocalModel(m.key))}>
                       <md-icon>delete</md-icon><span>Delete</span>
                     </button>
                   </Show>
                 </div>
+              </Show>
+              {/* Optional "eyes": lets the model look at pictures you attach. */}
+              <Show when={m.vision && have() && !busy()}>
+                <Show when={downloadProgress()[visionKey(m.key)] !== undefined} fallback={
+                  <div class="settings-row">
+                    <Show when={visionLocal().includes(m.key)} fallback={
+                      <button type="button" class="td-btn td-btn-outline td-btn-sm" onClick={() => run(() => downloadLocalVision(m.key))}>
+                        <md-icon>visibility</md-icon><span>Add eyes (see pictures) · {formatSize(m.vision!.size)}</span>
+                      </button>
+                    }>
+                      <span class="md-typescale-label-small settings-help">Can see pictures</span>
+                      <button type="button" class="td-btn td-btn-sm" onClick={() => run(() => deleteLocalVision(m.key))}>
+                        <md-icon>delete</md-icon><span>Remove eyes</span>
+                      </button>
+                    </Show>
+                  </div>
+                }>
+                  <div class="settings-row md-typescale-body-small">
+                    <span>Downloading eyes… {Math.round((downloadProgress()[visionKey(m.key)] ?? 0) * 100)}%</span>
+                    <button type="button" class="td-btn td-btn-sm" onClick={() => cancelLocalDownload(visionKey(m.key))}><span>Cancel</span></button>
+                  </div>
+                </Show>
               </Show>
             </div>
           );
         }}
       </For>
       <p class="md-typescale-body-small settings-help">
-        Models are downloaded once from Hugging Face and kept in talkdude's private storage. Qwen 2.5 is Apache-2.0; Llama 3.2 is under the Llama 3.2 Community License.
+        Models are downloaded once from Hugging Face and kept in talkdude's private storage. Qwen 2.5 and Qwen 3.5 are Apache-2.0; Llama 3.2 is under the Llama 3.2 Community License. An interrupted download continues where it stopped.
       </p>
     </div>
   );

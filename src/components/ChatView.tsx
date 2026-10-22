@@ -1,3 +1,4 @@
+import { runCode } from "../lib/coderun";
 import { For, Show, createEffect, createSignal, onCleanup, untrack } from "solid-js";
 import {
   messages,
@@ -10,6 +11,8 @@ import {
   streamingCodeBlocks,
   streamingCodeResults,
   chatError,
+  chatNotice,
+  setChatNotice,
   sendMessage,
   stopStreaming,
   selectConversation,
@@ -56,7 +59,7 @@ import AiSetupCard from "./AiSetup";
 import { lastLearned, setLastLearned, memoryNotice, setMemoryNotice } from "../lib/stores/learning";
 import type { Message, MessagePart } from "../lib/db";
 import { AVAILABLE_MODELS, modelSupportsCodeExecution, modelSupportsUrlContext } from "../lib/api/types";
-import { renderMarkdown } from "../lib/markdown";
+import { renderMarkdown, renderMarkdownFast } from "../lib/markdown";
 import {
   customInstructions,
   activeInstructionIds,
@@ -68,6 +71,7 @@ import {
 import {
   thinkingEnabled, setThinkingEnabled,
   thinkingLevel, setThinkingLevel,
+  thinkFirst, setThinkFirst,
   usesLevelBasedThinking, modelSupportsThinking,
   modelAlwaysThinking, getModelThinkingLevels,
 } from "../lib/stores/thinking";
@@ -127,11 +131,51 @@ export default function ChatView() {
     });
   };
 
+  // Follow new text only while the user is at the bottom; reading older messages isn't interrupted.
+  let lastCount = 0;
   createEffect(() => {
-    messages.length;
+    const count = messages.length;
     streamingText();
-    scrollToBottom();
+    const el = chatMessagesRef;
+    const nearBottom = !el || el.scrollHeight - el.scrollTop - el.clientHeight < 160;
+    if (count !== lastCount || nearBottom) scrollToBottom();
+    lastCount = count;
   });
+
+  // Streaming reply as HTML, updated at most ~12 times a second.
+  const [streamHtml, setStreamHtml] = createSignal("");
+  let streamTimer: ReturnType<typeof setTimeout> | undefined;
+  createEffect(() => {
+    const t = streamingText();
+    if (!t) { clearTimeout(streamTimer); streamTimer = undefined; setStreamHtml(""); return; }
+    if (streamTimer) return;
+    streamTimer = setTimeout(() => { streamTimer = undefined; setStreamHtml(renderMarkdownFast(streamingText())); }, 80);
+  });
+  onCleanup(() => clearTimeout(streamTimer));
+
+  // "Run" buttons on JavaScript / Python code blocks.
+  const onCodeRun = async (e: MouseEvent) => {
+    const btn = (e.target as HTMLElement | null)?.closest?.(".md-code-run") as HTMLButtonElement | null;
+    if (!btn) return;
+    const block = btn.closest(".md-code-block");
+    const code = block?.querySelector("code")?.textContent ?? "";
+    const lang = btn.dataset.lang === "py" ? "py" : "js";
+    btn.disabled = true;
+    btn.textContent = lang === "py" ? "Running… (first time loads Python)" : "Running…";
+    const r = await runCode(lang, code);
+    btn.disabled = false;
+    btn.textContent = "Run";
+    let out = block?.nextElementSibling as HTMLElement | null;
+    if (!out || !out.classList.contains("md-code-output")) {
+      out = document.createElement("pre");
+      out.className = "md-code-output";
+      block?.after(out);
+    }
+    out.classList.toggle("md-code-output--error", !r.ok);
+    out.textContent = r.out || (r.ok ? "(no output)" : "Error");
+  };
+  document.addEventListener("click", onCodeRun);
+  onCleanup(() => document.removeEventListener("click", onCodeRun));
 
   const [toolsMenuOpen, setToolsMenuOpen] = createSignal(false);
   const [modelMenuOpen, setModelMenuOpen] = createSignal(false);
@@ -195,12 +239,22 @@ export default function ChatView() {
     }
   });
 
+  let submitting = false;
   const doSubmit = async () => {
     const input = inputRef;
     const value = input?.value?.trim();
     if (!value && pendingAttachments.length === 0) return;
-    if (isStreaming()) return;
+    if (isStreaming() || submitting) return;
     if (hasPendingUploads()) return; // wait for file uploads to finish
+    submitting = true;
+    try {
+      await submitNow(input, value);
+    } finally {
+      submitting = false;
+    }
+  };
+
+  const submitNow = async (input: HTMLTextAreaElement | undefined, value: string | undefined) => {
 
     const editId = editingMessageId();
     const text = value || "";
@@ -488,6 +542,7 @@ export default function ChatView() {
   // === Snackbar ===
 
   const [snackbarMessage, setSnackbarMessage] = createSignal<string | null>(null);
+  const [snackbarAction, setSnackbarAction] = createSignal<{ label: string; run: () => void } | null>(null);
   const [snackbarExiting, setSnackbarExiting] = createSignal(false);
   let snackbarDismissTimer: ReturnType<typeof setTimeout> | undefined;
   let snackbarRemoveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -497,11 +552,12 @@ export default function ChatView() {
     clearTimeout(snackbarRemoveTimer);
   });
 
-  const showSnackbar = (message: string): void => {
+  const showSnackbar = (message: string, action?: { label: string; run: () => void }): void => {
     clearTimeout(snackbarDismissTimer);
     clearTimeout(snackbarRemoveTimer);
     setSnackbarExiting(false);
     setSnackbarMessage(message);
+    setSnackbarAction(action ?? null);
     // Auto-dismiss after 4s; remove from DOM after exit animation.
     snackbarDismissTimer = setTimeout(() => {
       setSnackbarExiting(true);
@@ -521,8 +577,18 @@ export default function ChatView() {
   });
 
   createEffect(() => {
-    const t = memoryNotice();
-    if (t) { showSnackbar(t); setMemoryNotice(null); }
+    const n = memoryNotice();
+    if (!n) return;
+    untrack(() => showSnackbar(n.text, n.undo ? { label: "Undo", run: () => { n.undo!(); showSnackbar("Undone"); } } : undefined));
+    setMemoryNotice(null);
+  });
+
+  // Short notices from the AI layer (fallback to another model, picture left out…).
+  createEffect(() => {
+    const n = chatNotice();
+    if (!n) return;
+    untrack(() => showSnackbar(n));
+    setChatNotice(null);
   });
 
   // Save a base64 inline image to Downloads.
@@ -1183,6 +1249,19 @@ export default function ChatView() {
             </Show>
           </div>
 
+          {/* "Think first" for every other model: reasons step by step, shown in the Thinking box */}
+          <Show when={!isGeminiModelId(selectedModel())}>
+            <button
+              type="button"
+              class={`thinking-btn ${thinkFirst() ? "thinking-active" : ""}`}
+              aria-pressed={thinkFirst()}
+              title="Think step by step before answering (slower, better for hard questions)"
+              onClick={() => setThinkFirst(!thinkFirst())}
+            >
+              <md-icon>psychology</md-icon>
+              <span class="md-typescale-label-medium">{thinkFirst() ? "Think" : "Fast"}</span>
+            </button>
+          </Show>
           {/* Thinking toggle (only for models that support it) */}
           <Show when={modelSupportsThinking(selectedModel()) && (isGemini() || !isGeminiModelId(selectedModel()))}>
             <div class="toolbar-menu-anchor">
@@ -1399,7 +1478,7 @@ export default function ChatView() {
                   </For>
                 </Show>
                 <Show when={streamingText()}>
-                  <div class="message-text" innerHTML={renderMarkdown(streamingText())} />
+                  <div class="message-text" innerHTML={streamHtml() || renderMarkdownFast(streamingText().slice(0, 200))} />
                 </Show>
                 <Show when={!streamingText() && !streamingThinking() && streamingCodeBlocks.length === 0 && streamingCodeResults.length === 0 && streamingImages.length === 0}>
                   <div class="typing-indicator">
@@ -1430,6 +1509,11 @@ export default function ChatView() {
           role="status"
         >
           <span class="snackbar-text md-typescale-body-medium">{snackbarMessage()}</span>
+          <Show when={snackbarAction()}>
+            <button type="button" class="snackbar-action md-typescale-label-large" onClick={() => { const a = snackbarAction(); setSnackbarAction(null); a?.run(); }}>
+              {snackbarAction()!.label}
+            </button>
+          </Show>
         </div>
       </Show>
     </div>

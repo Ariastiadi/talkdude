@@ -1635,3 +1635,21 @@
   flex-shrink: 0;
   display: flex;
 }
+
+/* Snackbar with an action (Undo) */
+.snackbar:has(.snackbar-action) {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  pointer-events: auto;
+}
+.snackbar-action {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--md-sys-color-inverse-primary, #ff6b6b);
+  font-weight: 700;
+  cursor: pointer;
+  padding: 6px 8px;
+  white-space: nowrap;
+}

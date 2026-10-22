@@ -1,3 +1,5 @@
+import { initSettings } from "../lib/stores/settings";
+import { loadCustomInstructions } from "../lib/stores/custom-instructions";
 import { For, Show, createSignal, createMemo } from "solid-js";
 import { Portal } from "solid-js/web";
 import {
@@ -72,6 +74,9 @@ export default function Sidebar() {
       const n = await importBackup(file);
       await loadConversations();
       await loadCharacters();
+      // Reload everything else the backup can change (providers, settings, instructions).
+      await initSettings();
+      await loadCustomInstructions();
       showToast(`${n} conversation${n === 1 ? "" : "s"} restored`);
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Could not restore the backup");
