@@ -7,7 +7,7 @@
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -59,12 +59,13 @@ pub struct ModelFile {
 #[tauri::command]
 pub fn llm_list(app: AppHandle) -> Result<Vec<ModelFile>, String> {
     let mut out = Vec::new();
-    let downloading = !downloads().lock().unwrap().is_empty();
+    // Clean up leftovers of an interrupted import once per start, never while one runs.
+    let clean = !IMPORTING.load(Ordering::SeqCst) && !CLEANED.swap(true, Ordering::SeqCst);
     for entry in fs::read_dir(models_dir(&app)?).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
         let name = entry.file_name().to_string_lossy().to_string();
         // Leftovers of an interrupted import are useless; downloads keep theirs for resuming.
-        if !downloading && name.ends_with(".gguf.import") {
+        if clean && name.ends_with(".gguf.import") {
             let _ = fs::remove_file(entry.path());
             continue;
         }
@@ -76,14 +77,23 @@ pub fn llm_list(app: AppHandle) -> Result<Vec<ModelFile>, String> {
     Ok(out)
 }
 
+/// Runs off the main thread: unloading may wait for a reply that is still being written.
 #[tauri::command]
-pub fn llm_delete(app: AppHandle, file: String) -> Result<(), String> {
+pub async fn llm_delete(app: AppHandle, file: String) -> Result<(), String> {
     let path = model_path(&app, &file)?;
-    unload_if(&path);
-    if path.exists() {
-        fs::remove_file(&path).map_err(|e| e.to_string())?;
-    }
-    Ok(())
+    tauri::async_runtime::spawn_blocking(move || {
+        if LOADED.lock().unwrap().as_ref().map(|(m, v)| m == &path || v.as_ref() == Some(&path)).unwrap_or(false) {
+            // Stop what the model is doing so it can be unloaded right away.
+            STOP_EPOCH.fetch_add(1, Ordering::SeqCst);
+        }
+        unload_if(&path);
+        if path.exists() {
+            fs::remove_file(&path).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Cancel flags of running downloads, one per file (so cancelling one doesn't stop another).
@@ -212,6 +222,9 @@ pub fn llm_cancel_download(file: Option<String>) {
     }
 }
 
+static IMPORTING: AtomicBool = AtomicBool::new(false);
+static CLEANED: AtomicBool = AtomicBool::new(false);
+
 /// Appends raw bytes to a model file (used to move models downloaded by the
 /// older WebAssembly engine into native storage without downloading again).
 #[tauri::command]
@@ -229,6 +242,7 @@ pub fn llm_import_chunk(app: AppHandle, request: tauri::ipc::Request<'_>) -> Res
     };
     let path = model_path(&app, &file)?;
     let part = path.with_extension("gguf.import");
+    IMPORTING.store(!last, Ordering::SeqCst);
     let mut f = fs::OpenOptions::new()
         .create(true)
         .write(true)
@@ -261,7 +275,9 @@ enum Job {
         params: GenParams,
         on_token: Channel<String>,
         images: Vec<Vec<u8>>,
-        /// Value of STOP_EPOCH when the request was made; a later Stop cancels it.
+        /// Request id (from the app), so Stop cancels only this reply.
+        req_id: u64,
+        /// Value of STOP_EPOCH when the request was made; "stop everything" bumps it.
         epoch: u64,
         reply: mpsc::Sender<Result<(), String>>,
     },
@@ -384,14 +400,16 @@ fn run_worker(rx: mpsc::Receiver<Job>) {
                 params,
                 on_token,
                 images,
+                req_id,
                 epoch,
                 reply,
             } => {
+                let cancelled = move || STOP_EPOCH.load(Ordering::SeqCst) != epoch || stopped().lock().unwrap().contains(&req_id);
                 let res = match &current {
                     None => Err("No on-device model is loaded.".to_string()),
                     Some(l) => {
                         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            generate(&backend, l, &messages, &params, &images, epoch, &on_token)
+                            generate(&backend, l, &messages, &params, &images, &cancelled, &on_token)
                         }));
                         match r {
                             Ok(x) => x,
@@ -407,10 +425,17 @@ fn run_worker(rx: mpsc::Receiver<Job>) {
                 } else {
                     res
                 };
+                stopped().lock().unwrap().remove(&req_id);
                 let _ = reply.send(res);
             }
         }
     }
+}
+
+/// Ids of replies the user stopped.
+fn stopped() -> &'static Mutex<HashSet<u64>> {
+    static S: OnceLock<Mutex<HashSet<u64>>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
 fn generate(
@@ -419,10 +444,10 @@ fn generate(
     messages: &[ChatMessage],
     params: &GenParams,
     images: &[Vec<u8>],
-    epoch: u64,
+    cancelled: &dyn Fn() -> bool,
     on_token: &Channel<String>,
 ) -> Result<(), String> {
-    llm_core::generate(backend, l, messages, params, images, epoch, &mut |t| { let _ = on_token.send(t); })
+    llm_core::generate(backend, l, messages, params, images, cancelled, &mut |t| { let _ = on_token.send(t); })
 }
 
 fn default_threads() -> i32 {
@@ -434,7 +459,8 @@ fn default_threads() -> i32 {
 }
 
 #[tauri::command]
-pub async fn llm_load(app: AppHandle, file: String, n_ctx: Option<u32>, mmproj: Option<String>) -> Result<(), String> {
+/// Loads a model (and its "eyes"). Returns true when the eyes are loaded.
+pub async fn llm_load(app: AppHandle, file: String, n_ctx: Option<u32>, mmproj: Option<String>) -> Result<bool, String> {
     let path = model_path(&app, &file)?;
     if !path.exists() {
         return Err("This model is not downloaded yet.".into());
@@ -447,7 +473,7 @@ pub async fn llm_load(app: AppHandle, file: String, n_ctx: Option<u32>, mmproj: 
         None => None,
     };
     if LOADED.lock().unwrap().as_ref() == Some(&(path.clone(), eyes.clone())) {
-        return Ok(());
+        return Ok(eyes.is_some());
     }
     let (reply, rx) = mpsc::channel();
     worker()
@@ -461,7 +487,8 @@ pub async fn llm_load(app: AppHandle, file: String, n_ctx: Option<u32>, mmproj: 
         .map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || rx.recv().unwrap_or(Err("engine stopped".into())))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())??;
+    Ok(LOADED.lock().unwrap().as_ref().map(|(_, v)| v.is_some()).unwrap_or(false))
 }
 
 #[tauri::command]
@@ -469,6 +496,7 @@ pub async fn llm_chat(
     messages: Vec<ChatMessage>,
     params: GenParams,
     images: Option<Vec<String>>,
+    req_id: Option<u64>,
     on_token: Channel<String>,
 ) -> Result<(), String> {
     use base64::Engine as _;
@@ -485,6 +513,7 @@ pub async fn llm_chat(
             params,
             on_token,
             images,
+            req_id: req_id.unwrap_or(0),
             epoch,
             reply,
         })
@@ -494,10 +523,21 @@ pub async fn llm_chat(
         .map_err(|e| e.to_string())?
 }
 
+/// Stops one reply (by its request id), or every running and queued reply when no id is given.
 #[tauri::command]
-pub fn llm_stop() {
-    // Cancels the running generation and any already queued (each remembers the epoch it was asked in).
-    STOP_EPOCH.fetch_add(1, Ordering::SeqCst);
+pub fn llm_stop(req_id: Option<u64>) {
+    match req_id {
+        Some(id) => {
+            let mut s = stopped().lock().unwrap();
+            if s.len() > 1000 {
+                s.clear();
+            }
+            s.insert(id);
+        }
+        None => {
+            STOP_EPOCH.fetch_add(1, Ordering::SeqCst);
+        }
+    }
 }
 
 #[tauri::command]
