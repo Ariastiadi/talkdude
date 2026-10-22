@@ -1,3 +1,4 @@
+import { mergeNotes } from "./stores/learning";
 /**
  * Export & backup: save a conversation as Markdown, and back up / restore the
  * whole local database as JSON.
@@ -205,6 +206,7 @@ export async function importBackup(file: File): Promise<number> {
   if (data.app !== "talkdude" || !Array.isArray(data.conversations) || !Array.isArray(data.messages)) {
     throw new Error("This file is not a valid talkdude backup.");
   }
+  let restoredNotes: unknown = null;
   await db.transaction("rw", [db.conversations, db.messages, db.messageBranches, db.customInstructions, db.characters, db.settings], async () => {
     await db.conversations.bulkPut(data.conversations!);
     await db.messages.bulkPut(data.messages!);
@@ -214,6 +216,8 @@ export async function importBackup(file: File): Promise<number> {
     if (Array.isArray(data.settings)) {
       for (const s of data.settings) {
         if (!s || typeof s.key !== "string" || SECRET_SETTING_KEYS.has(s.key)) continue;
+        // Learned notes are merged with the ones on this device (below), not replaced.
+        if (s.key === "talkdude_learned_notes") { restoredNotes = s.value; continue; }
         // Never let a backup overwrite the keys the user has configured here.
         if (s.key === "talkdude_providers") {
           const existing = await db.settings.get(s.key);
@@ -223,5 +227,6 @@ export async function importBackup(file: File): Promise<number> {
       }
     }
   });
+  if (restoredNotes) await mergeNotes(restoredNotes);
   return data.conversations!.length;
 }

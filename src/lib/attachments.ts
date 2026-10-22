@@ -163,8 +163,58 @@ export async function readLocalFile(file: File): Promise<LocalFile> {
   throw new Error(`“${file.name}” isn't supported here. Use pictures, PDF, Word (.docx) or text and code files.`);
 }
 
+function terms(s: string): string[] {
+  return (s.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []);
+}
+
+/**
+ * The parts of a long file that matter for the question: the beginning (title,
+ * summary) plus the passages that share the most rare words with the question,
+ * kept in their original order. Small on-device models then read what's relevant
+ * instead of only the first page.
+ */
+export function relevantExcerpt(text: string, query: string, budget: number): string {
+  if (text.length <= budget) return text;
+  const size = 900;
+  const chunks: string[] = [];
+  for (let i = 0; i < text.length; i += size) chunks.push(text.slice(i, i + size));
+  const q = new Set(terms(query));
+  const df = new Map<string, number>();
+  const chunkTerms = chunks.map((c) => new Set(terms(c)));
+  for (const ts of chunkTerms) for (const t of ts) df.set(t, (df.get(t) ?? 0) + 1);
+  const N = chunks.length;
+  const scores = chunkTerms.map((ts) => {
+    let s = 0;
+    for (const t of ts) if (q.has(t)) s += Math.log(1 + N / (df.get(t) ?? 1));
+    return s;
+  });
+  const picked = new Set<number>([0]);
+  const order = scores.map((s, i) => ({ s, i })).filter((x) => x.s > 0).sort((a, b) => b.s - a.s);
+  let used = chunks[0].length;
+  for (const { i } of order) {
+    if (used + chunks[i].length > budget) continue;
+    picked.add(i);
+    used += chunks[i].length;
+  }
+  // Nothing matched the question: keep reading from the start.
+  if (!order.length) {
+    for (let i = 1; i < N && used + chunks[i].length <= budget; i++) {
+      picked.add(i);
+      used += chunks[i].length;
+    }
+  }
+  const idx = [...picked].sort((a, b) => a - b);
+  let out = "";
+  let prev = -1;
+  for (const i of idx) {
+    if (prev !== -1 && i !== prev + 1) out += "\n[…]\n";
+    out += chunks[i];
+    prev = i;
+  }
+  return out + "\n[… only the parts that matter for the question are shown]";
+}
+
 /** How much of a file's text goes to the model, so it fits the model's memory. */
-export function fileForModel(name: string, text: string, budget: number): string {
-  const body = text.length > budget ? text.slice(0, budget) + "\n[… the rest of the file was left out to fit this model]" : text;
-  return `[Attached file: ${name}]\n${body}\n[End of file]`;
+export function fileForModel(name: string, text: string, budget: number, query = ""): string {
+  return `[Attached file: ${name}]\n${relevantExcerpt(text, query, budget)}\n[End of file]`;
 }
