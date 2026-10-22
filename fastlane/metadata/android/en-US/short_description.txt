@@ -1,0 +1,1 @@
+Free private AI chat. Works offline with on-device AI, no API key needed.
