@@ -6,6 +6,7 @@ import sup from "markdown-it-sup";
 // @ts-expect-error: no type declarations available
 import mark from "markdown-it-mark";
 import hljs from "highlight.js/lib/common";
+import { runnableLanguage } from "./coderun";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 
@@ -141,6 +142,9 @@ function taskListPlugin(md: MarkdownIt): void {
   });
 }
 
+/** While a reply streams, skip slow language auto-detection (it re-runs on every update). */
+let fastRender = false;
+
 const md = new MarkdownIt({
   html: false,
   linkify: true,
@@ -156,6 +160,8 @@ const md = new MarkdownIt({
       } catch {
         highlighted = md.utils.escapeHtml(str);
       }
+    } else if (fastRender) {
+      highlighted = md.utils.escapeHtml(str);
     } else {
       try {
         const result = hljs.highlightAuto(str);
@@ -169,6 +175,7 @@ const md = new MarkdownIt({
       `<div class="md-code-block">` +
       `<div class="md-code-header">` +
       `<span class="md-code-lang">${md.utils.escapeHtml(languageLabel)}</span>` +
+      (runnableLanguage(lang) ? `<button class="md-code-run" data-lang="${runnableLanguage(lang)}">Run</button>` : "") +
       `<button class="md-code-copy" onclick="navigator.clipboard.writeText(this.closest('.md-code-block').querySelector('code').textContent).then(()=>{this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)})">Copy</button>` +
       `</div>` +
       `<pre class="md-code-pre"><code class="hljs">${highlighted}</code></pre>` +
@@ -242,4 +249,14 @@ md.renderer.rules.blockquote_open = function (tokens, idx, options, env, self) {
  */
 export function renderMarkdown(text: string): string {
   return md.render(text);
+}
+
+/** Faster rendering for text that is still streaming in. */
+export function renderMarkdownFast(text: string): string {
+  fastRender = true;
+  try {
+    return md.render(text);
+  } finally {
+    fastRender = false;
+  }
 }

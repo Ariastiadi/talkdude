@@ -33,14 +33,14 @@ const SAVE_TRAILING = new RegExp(
 );
 // "remember that …", "ingat ya, …" (not for questions like "remember when…?")
 const REMEMBER = new RegExp(
-  `^${POLITE}(?:remember|ingat(?:lah|kan)?|jangan lupa|don'?t forget|catat bahwa)\\s*(?:ya|bahwa|kalau|kalo|that|this|ini)?[\\s:,.\\-–]*(.{4,})$`,
-  "is",
+  `^${POLITE}(?:remember|ingat(?:lah|kan)?|jangan lupa|don'?t forget|catat bahwa)(?![\\p{L}])\\s*(?:ya|bahwa|kalau|kalo|that|this|ini)?[\\s:,.\\-–]*(.{4,})$`,
+  "isu",
 );
 const QUESTION_START = /^(when|how|what|why|who|where|if|the time|kapan|bagaimana|gimana|apa|kenapa|siapa|gak|ga|nggak|ngga|tidak|kah)\b/i;
 
 const FORGET = new RegExp(
-  `^${POLITE}(?:forget|lupakan|lupain)\\s*(?:that|about|tentang|soal|bahwa)?[\\s:,.\\-–]*(.{3,})$`,
-  "is",
+  `^${POLITE}(?:forget|lupakan|lupain)(?![\\p{L}])\\s*(?:that|about|tentang|soal|bahwa)?[\\s:,.\\-–]*(.{3,})$`,
+  "isu",
 );
 const FORGET_FROM_MEMORY = new RegExp(
   `^${POLITE}(?:remove|delete|hapus(?:kan)?|buang)\\s+(.{3,}?)\\s+(?:from|dari)\\s+(?:my\\s+)?${MEMORY}[\\s.!]*$`,

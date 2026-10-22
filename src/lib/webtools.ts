@@ -94,6 +94,36 @@ async function searchDuckDuckGo(q: string, signal?: AbortSignal): Promise<Hit[]>
   return parseDuckDuckGo(r.text);
 }
 
+/** DuckDuckGo's even simpler "lite" page: a different layout, used when the HTML page fails. */
+export function parseDuckDuckGoLite(html: string): Hit[] {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const hits: Hit[] = [];
+  const links = [...doc.querySelectorAll("a.result-link, a.result__a")] as HTMLAnchorElement[];
+  for (const a of links) {
+    let href = a.getAttribute("href") ?? "";
+    try {
+      const u = new URL(href, "https://lite.duckduckgo.com");
+      href = u.searchParams.get("uddg") ? decodeURIComponent(u.searchParams.get("uddg")!) : u.href;
+    } catch { /* keep */ }
+    if (!/^https?:\/\//i.test(href) || /duckduckgo\.com/.test(href)) continue;
+    // The snippet is in a following table row.
+    const row = a.closest("tr");
+    let snippet = "";
+    let next = row?.nextElementSibling;
+    for (let k = 0; k < 3 && next && !snippet; k++, next = next.nextElementSibling) {
+      snippet = (next.querySelector(".result-snippet")?.textContent ?? "").replace(/\s+/g, " ").trim();
+    }
+    const title = (a.textContent ?? "").replace(/\s+/g, " ").trim();
+    if (title) hits.push({ title, url: href, snippet });
+  }
+  return hits;
+}
+
+async function searchDuckDuckGoLite(q: string, signal?: AbortSignal): Promise<Hit[]> {
+  const r = await getText(`https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(q)}&kl=wt-wt`, signal);
+  return parseDuckDuckGoLite(r.text);
+}
+
 async function searchWikipedia(q: string, signal?: AbortSignal): Promise<Hit[]> {
   const out: Hit[] = [];
   for (const lang of ["en", "id"]) {
@@ -116,11 +146,15 @@ async function searchWikipedia(q: string, signal?: AbortSignal): Promise<Hit[]> 
   return out;
 }
 
+/** Tries several free search pages in turn, so one being down or changed doesn't break search. */
 export async function searchWeb(query: string, signal?: AbortSignal): Promise<Hit[]> {
-  try {
-    const hits = await searchDuckDuckGo(query, signal);
-    if (hits.length) return hits;
-  } catch { /* fall through to Wikipedia */ }
+  for (const engine of [searchDuckDuckGo, searchDuckDuckGoLite]) {
+    try {
+      const hits = await engine(query, signal);
+      if (hits.length) return hits;
+    } catch { /* try the next one */ }
+    if (signal?.aborted) return [];
+  }
   return searchWikipedia(query, signal);
 }
 
