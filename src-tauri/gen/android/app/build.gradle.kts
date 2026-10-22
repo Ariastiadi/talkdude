@@ -86,7 +86,8 @@ android {
     }
     splits {
         abi {
-            isEnable = true
+            // Split APKs per CPU type; off when building the Play bundle (.aab), which can't use splits.
+            isEnable = System.getenv("TALKDUDE_AAB") == null
             isUniversalApk = true
             reset()
             include("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
