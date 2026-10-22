@@ -306,6 +306,9 @@ jobs:
         run: bun run tauri icon app-icon.svg
 
       - name: Build macOS app
+        env:
+          # llama.cpp uses C++17 std::filesystem, available from macOS 10.15.
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
         run: |
           rm -rf src-tauri/target/release/bundle/
           bun run tauri build --bundles dmg
