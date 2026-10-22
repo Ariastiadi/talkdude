@@ -78,8 +78,8 @@ export function parseDuckDuckGo(html: string): Hit[] {
     let href = a.getAttribute("href") ?? "";
     try {
       const u = new URL(href, "https://duckduckgo.com");
-      const real = u.searchParams.get("uddg");
-      href = real ? decodeURIComponent(real) : u.href;
+      // searchParams already decodes the value.
+      href = u.searchParams.get("uddg") ?? u.href;
     } catch { /* keep raw */ }
     if (!/^https?:\/\//i.test(href) || /duckduckgo\.com\/y\.js/.test(href)) return;
     const snippet = (el.querySelector(".result__snippet")?.textContent ?? "").replace(/\s+/g, " ").trim();
@@ -103,7 +103,7 @@ export function parseDuckDuckGoLite(html: string): Hit[] {
     let href = a.getAttribute("href") ?? "";
     try {
       const u = new URL(href, "https://lite.duckduckgo.com");
-      href = u.searchParams.get("uddg") ? decodeURIComponent(u.searchParams.get("uddg")!) : u.href;
+      href = u.searchParams.get("uddg") ?? u.href;
     } catch { /* keep */ }
     if (!/^https?:\/\//i.test(href) || /duckduckgo\.com/.test(href)) continue;
     // The snippet is in a following table row.
