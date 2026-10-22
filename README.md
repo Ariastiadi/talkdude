@@ -15,7 +15,7 @@
 
 ---
 
-> **New in 1.4: say “save to memory”, and use files, links and web search with any AI.** Earlier, in 1.1: chat without any API key. talkdude can now download a small AI model once and run it right on your phone or PC. No key, no sign-up, no limits, and it keeps working without internet.
+> **New in 1.5: the built-in AI can see pictures.** Newer, smarter on-device models (Qwen 3.5), longer memory on phones, “Think” mode and a Run button for code with every AI, a Mac version, and many fixes. In 1.4: “save to memory”, plus files, links and web search with any AI. In 1.1: chat without any API key. talkdude can now download a small AI model once and run it right on your phone or PC. No key, no sign-up, no limits, and it keeps working without internet.
 
 <p align="center">
   <img src="docs/screenshots/welcome.png" width="200" alt="Choose how talkdude thinks" />
@@ -29,17 +29,20 @@
 
 talkdude is a chat app for talking with AI: ask questions, write, brainstorm, or role-play with characters in the style of Chai and Character.AI. Pick how it thinks on the first launch:
 
-- **On-device AI:** a small open model (Qwen 2.5 or Llama 3.2) runs inside the app. Free, unlimited, private and offline.
+- **On-device AI:** a small open model (Qwen 3.5, Qwen 2.5 or Llama 3.2) runs inside the app. Free, unlimited, private and offline. Qwen 3.5 can also look at pictures.
 - **Cloud AI with your own free key:** Google Gemini, Groq, OpenRouter's free models, or paid providers like OpenAI and Claude.
 
 Your chats are stored only on your device. talkdude has no server of its own.
 
 ## Features
 
-- **Works with no key at all.** Download Qwen 2.5 0.5B (398 MB), Llama 3.2 1B (808 MB) or Qwen 2.5 1.5B (986 MB) once, then chat as much as you like, even in airplane mode.
+- **Works with no key at all.** Download a model once, then chat as much as you like, even in airplane mode: Qwen 3.5 0.8B (580 MB), 2B (1.4 GB) or 4B (3 GB), Qwen 2.5 0.5B / 1.5B, or Llama 3.2 1B. Settings → On-device marks the one that suits your device. Downloads that get cut off continue where they stopped.
+- **The built-in AI can see.** Add “eyes” to a Qwen 3.5 model (one extra download) and attach a photo: it describes it, reads it and answers questions about it, fully offline.
+- **Smarter with long files.** For on-device models, talkdude picks the parts of a long document that match your question instead of only reading the first page.
 - **Small.** The Android APK is about 8 MB, with a fast native llama.cpp engine built in; models are downloaded only if you use them.
-- **Memory, like ChatGPT, Gemini and Claude.** talkdude notes what you tell it about yourself (name, interests, plans, how you like answers), and you can say it out loud too: *“save to memory: I live in Bandung”*, *“ingat ya, aku suka kopi”*, *“forget that”*. The relevant notes go to the AI in every chat, so even the built-in AI gets more personal over time. No limit on notes. See, search, edit or delete everything in Settings → Memory.
-- **Files, links and web search for every AI.** Attach pictures, PDF, Word (.docx), text and code files to any model, including the on-device one (pictures need a model that can see). Switch on **Web search** or **Read links** in the Tools menu and talkdude looks things up itself (DuckDuckGo, with Wikipedia as backup) and hands the results to the AI. No key needed. Code execution stays Gemini-only.
+- **Memory, like ChatGPT, Gemini and Claude.** talkdude notes what you tell it about yourself (name, interests, plans, how you like answers), and you can say it out loud too: *“save to memory: I live in Bandung”*, *“ingat ya, aku suka kopi”*, *“forget that”*, or just ask the AI in your own words to keep something in mind. Every save shows an **Undo** button. Notes are matched by topic too (coffee ↔ favourite drink), and the relevant ones go to the AI in every chat, so even the built-in AI gets more personal over time. No limit on notes. See, search, edit or delete everything in Settings → Memory.
+- **Files, links and web search for every AI.** Attach pictures, PDF, Word (.docx), text and code files to any model, including the on-device one. If a model can't see pictures, the picture is left out with a note instead of an error. Switch on **Web search** or **Read links** in the Tools menu and talkdude looks things up itself (DuckDuckGo, DuckDuckGo Lite, then Wikipedia as backups) and hands the results to the AI. No key needed.
+- **Think mode and Run for every AI.** Tap **Fast/Think** to let any model reason step by step first (shown in a Thinking box). JavaScript and Python code in replies gets a **Run** button; code runs on your device (Python loads once, about 10 MB).
 - **Many providers in one model picker.** Gemini and Gemma, Claude, OpenAI, Groq, OpenRouter, DeepSeek, Mistral, Ollama, or any OpenAI-compatible server.
 - **No chat limits.** talkdude never counts your messages. When a cloud model hits its free-tier limit, the reply continues on the next model you've set up.
 - **Create a Chat AI.** Make your own AI in three steps: a name and photo (or emoji), a personality (pick traits like witty or caring, what they are to you, how they talk, plus your own description) and a first message.
@@ -47,7 +50,7 @@ Your chats are stored only on your device. talkdude has no server of its own.
 - **Role-play tools.** Swipe between alternative replies (`< 2/3 >`), edit any AI reply to steer the story, and pin up to 15 memories per chat so the AI never forgets them. Your persona fills in `{{user}}`.
 - **Optional content filter.** Gemini's safety filters can be switched off in Settings for adults. Each provider's own policies still apply.
 - **Export and backup.** Export a chat to Markdown, back up every chat and character to one JSON file, and restore it any time. API keys are never written to backups.
-- **Gemini extras.** Google's own file uploads, Google Search, code execution and adjustable thinking.
+- **Gemini extras.** Google's own file uploads, Google Search, server-side code execution and adjustable thinking levels.
 - **Nothing-inspired look.** Black and white, a single red dot, dot-matrix headings. Dark, light or follow the system.
 
 ## Privacy
@@ -70,14 +73,17 @@ Pick one:
 
 Updates install over the old version without uninstalling.
 
-### Windows and Linux
+### Windows, Mac and Linux
 
 Download from [Releases](https://github.com/Ariastiadi/talkdude/releases/latest):
 
 | Platform | Files |
 |----------|-------|
 | Windows  | `.exe` installer or `.msi` |
+| Mac (Apple Silicon) | `talkdude-macos-arm64.dmg`. It isn't signed with an Apple developer ID yet: the first time, right-click the app → **Open**. |
 | Linux    | `.AppImage`, `.deb` or `.rpm` |
+
+`talkdude-android-play.aab` is the app bundle for publishing on Google Play. An iPhone version needs an Apple developer account and isn't available yet.
 
 > **Arch/Fedora:** if the AppImage crashes with an EGL display error, use the `.rpm` or convert the `.deb` with `debtap`.
 
@@ -99,12 +105,12 @@ D4:5F:DB:5A:21:66:FB:3A:D6:0D:0D:3E:70:E6:66:AD:67:49:58:EF:27:D4:4A:81:F9:02:B4
 
 ## Requirements
 
-- Android 7.0 (API 24) or newer. On-device models need about 1.5 GB of free RAM for Qwen 2.5 0.5B, and more for the bigger models.
-- Windows 10/11 or a recent 64-bit Linux desktop.
+- Android 7.0 (API 24) or newer. On-device models need roughly 1.5 GB of free RAM for the small ones, 3 GB for Qwen 3.5 2B and 5 GB for Qwen 3.5 4B.
+- Windows 10/11, macOS 11+ on Apple Silicon, or a recent 64-bit Linux desktop.
 
 ## Build from source
 
-talkdude is built with [Tauri v2](https://v2.tauri.app/) (Rust) and SolidJS. On-device models run with [wllama](https://github.com/ngxson/wllama) (llama.cpp compiled to WebAssembly). You need [Bun](https://bun.sh/) 1.0+, [Rust](https://www.rust-lang.org/) 1.77+ and, for Android, the Android SDK and NDK.
+talkdude is built with [Tauri v2](https://v2.tauri.app/) (Rust) and SolidJS. In the app, on-device models run with [llama.cpp](https://github.com/ggml-org/llama.cpp) (including its multimodal library for pictures); in a plain browser with [wllama](https://github.com/ngxson/wllama). You need [Bun](https://bun.sh/) 1.0+, [Rust](https://www.rust-lang.org/) 1.77+ and, for Android, the Android SDK and NDK.
 
 ```bash
 bun install
@@ -114,10 +120,10 @@ bun run tauri build               # desktop release build
 bun run tauri android build --apk # Android
 ```
 
-GitHub Actions builds every platform on each push to `main` (see `.github/workflows/release.yml`). When the `version` in `src-tauri/tauri.conf.json` has no release yet, a new GitHub Release is published with the APKs, EXE/MSI and AppImage/DEB/RPM.
+Tests: `bun run typecheck`, `bun run test` (unit tests) and, after `bun run build`, `bun run test:e2e` (the web app with a mocked AI). GitHub Actions runs them and builds every platform on each push to `main` (see `.github/workflows/release.yml`). When the `version` in `src-tauri/tauri.conf.json` has no release yet, a new GitHub Release is published with the APKs, EXE/MSI and AppImage/DEB/RPM.
 
 ## License
 
 talkdude is free software under the [GNU General Public License v3.0 or later](LICENSE).
 
-It started as a fork of [Lumi AI](https://github.com/iamlooper/Lumi-AI) by Looper (MIT). The original MIT license text and third-party credits (Doto font, OFL) are in [NOTICE.md](NOTICE.md). On-device model weights are downloaded from Hugging Face and keep their own licenses (Qwen 2.5: Apache-2.0; Llama 3.2: Llama 3.2 Community License).
+It started as a fork of [Lumi AI](https://github.com/iamlooper/Lumi-AI) by Looper (MIT). The original MIT license text and third-party credits (Doto font, OFL) are in [NOTICE.md](NOTICE.md). On-device model weights are downloaded from Hugging Face and keep their own licenses (Qwen 2.5 and Qwen 3.5: Apache-2.0; Llama 3.2: Llama 3.2 Community License).
