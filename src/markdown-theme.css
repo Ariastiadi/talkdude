@@ -539,3 +539,34 @@
     background: rgba(26, 107, 60, 0.2);
   }
 }
+
+/* Run button and output for JavaScript / Python code blocks */
+.md-code-run {
+  margin-left: auto;
+  margin-right: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--md-sys-color-on-primary);
+  background: var(--md-sys-color-primary);
+  border: none;
+  cursor: pointer;
+  padding: 2px 10px;
+  border-radius: var(--md-sys-shape-corner-small);
+  font-family: var(--md-ref-typeface-plain);
+}
+.md-code-run:disabled { opacity: 0.6; cursor: progress; }
+.md-code-output {
+  margin: -4px 0 12px;
+  padding: 10px 14px;
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--md-ref-typeface-mono, monospace);
+  font-size: 12px;
+  border-radius: 0 0 var(--md-sys-shape-corner-medium) var(--md-sys-shape-corner-medium);
+  background: var(--md-sys-color-surface-container-highest);
+  color: var(--md-sys-color-on-surface);
+  border-left: 3px solid var(--md-sys-color-primary);
+}
+.md-code-output--error { border-left-color: var(--md-sys-color-error); }
