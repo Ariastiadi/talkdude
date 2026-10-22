@@ -13,6 +13,7 @@ import {
   chatError,
   chatNotice,
   setChatNotice,
+  sendBusy,
   sendMessage,
   stopStreaming,
   selectConversation,
@@ -239,19 +240,14 @@ export default function ChatView() {
     }
   });
 
-  let submitting = false;
   const doSubmit = async () => {
     const input = inputRef;
     const value = input?.value?.trim();
     if (!value && pendingAttachments.length === 0) return;
-    if (isStreaming() || submitting) return;
+    // sendBusy covers the moment between "send" and the reply starting (double taps).
+    if (isStreaming() || sendBusy()) return;
     if (hasPendingUploads()) return; // wait for file uploads to finish
-    submitting = true;
-    try {
-      await submitNow(input, value);
-    } finally {
-      submitting = false;
-    }
+    await submitNow(input, value);
   };
 
   const submitNow = async (input: HTMLTextAreaElement | undefined, value: string | undefined) => {
