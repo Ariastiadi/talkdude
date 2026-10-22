@@ -13,7 +13,7 @@ import type {
 import { DEFAULT_MODEL_ID, TITLE_MODEL, modelSupportsCodeExecution, modelSupportsUrlContext } from "../api/types";
 import { getActiveSystemInstruction } from "./custom-instructions";
 import { isGeminiModelId, isDeviceModelId, persistSelectedModel, loadSelectedModel } from "./settings";
-import { buildLearnedPrompt, learnFromMessage, learningEnabled, rememberOnRequest, forgetOnRequest } from "./learning";
+import { buildLearnedPrompt, learnFromMessage, learningEnabled, rememberOnRequest, forgetOnRequest, queueForLearning, learnNow, isPersonal } from "./learning";
 import { parseMemoryCommand, type MemoryCommand } from "../memory-commands";
 import { readLocalFile, fileForModel } from "../attachments";
 import { buildWebContext, type WebBudget } from "../webtools";
@@ -69,6 +69,11 @@ const [streamingImages, setStreamingImages] = createStore<GeminiInlineData[]>([]
 const [streamingCodeBlocks, setStreamingCodeBlocks] = createStore<{ language: string; code: string }[]>([]);
 const [streamingCodeResults, setStreamingCodeResults] = createStore<{ outcome: string; output: string }[]>([]);
 const [chatError, setChatError] = createSignal<string | null>(null);
+/** True from "send" until the reply has started (blocks a double tap without blocking other chats). */
+const [sendBusyCount, setSendBusyCount] = createSignal(0);
+const sendBusy = () => sendBusyCount() > 0;
+export { sendBusy };
+
 /** Short notice for the user that isn't an error (shown as a toast). */
 const [chatNotice, setChatNotice] = createSignal<string | null>(null);
 export { chatNotice, setChatNotice };
@@ -951,11 +956,13 @@ export async function retryMessage(): Promise<void> {
   const keyHint = await getCurrentApiKeyHint();
   const contents = buildContentsFromMessages(remainingMsgs, keyHint);
   const userText = prevUserMsg?.parts.find((p) => p.type === "text")?.text ?? "";
-  await startStream(convId, contents, userText, remainingMsgs.length, retryBranchCtx, async () => {
-    // Generation failed: put the previous answer back.
+  await startStream(convId, contents, userText, remainingMsgs.length, retryBranchCtx, undefined, async () => {
+    // Generation failed: put the previous answer back (on screen only if this chat is open).
     swipeStash.delete(convId);
     await db.messages.put(restoreMsg);
-    setMessages(produce((draft) => { if (!draft.some((m) => m.id === restoreMsg.id)) draft.push(restoreMsg); }));
+    if (activeConversationId() === convId) {
+      setMessages(produce((draft) => { if (!draft.some((m) => m.id === restoreMsg.id)) draft.push(restoreMsg); }));
+    }
   });
 }
 
@@ -1085,7 +1092,7 @@ export async function editMessage(messageId: string, newText: string, newAttachm
   await startStream(convId, contents, newText, allMsgs.length, {
     branchGroupId: branchGroupId!,
     branchIndex: newBranchIndex,
-  }, async () => {
+  }, undefined, async () => {
     // Remove the new user message
     await db.messages.delete(userMsg.id);
 
@@ -1380,6 +1387,7 @@ async function startStream(
   userText: string,
   turnCount: number,
   branchCtx?: { branchGroupId: string; branchIndex: number },
+  onStarted?: () => void,
   onErrorRecovery?: () => Promise<void>,
 ): Promise<void> {
   setChatError(null);
@@ -1415,6 +1423,8 @@ async function startStream(
 
   // Register background stream
   backgroundStreams.set(convId, { abortController: controller, fullText: "", fullThinking: "", branchCtx });
+  // The reply has started: another message may be sent (in this or another chat).
+  onStarted?.();
   setStreamingConvIds(produce((d) => { d[convId] = true; }));
   setStreamingBranchCtx(produce((d) => { d[convId] = branchCtx; }));
 
@@ -1648,7 +1658,7 @@ async function startStream(
         }
         // Learn durable facts about the user from normal chats (best-effort, in the background).
         if (fullText && !isCharacterChat && !skipLearning) {
-          const run = () => void learnFromMessage(convId, userText, async (prompt) => {
+          const ask = async (prompt: string) => {
             const learnModel = isGeminiModelId(model) ? TITLE_MODEL : model;
             const ac = new AbortController();
             learningAbort = ac;
@@ -1658,13 +1668,16 @@ async function startStream(
             } finally {
               if (learningAbort === ac) learningAbort = null;
             }
-          });
-          // On-device: learn a little later, when the user is reading, and give way to the next message.
+          };
           if (isDeviceModelId(model)) {
+            // On-device: note the message now, learn a little later while the user reads,
+            // and give way to the next message (a cancelled run is retried later).
+            queueForLearning(convId, userText);
+            const personal = isPersonal(userText);
             clearTimeout(learnTimer);
-            learnTimer = setTimeout(() => { if (!streamingConvIds[convId]) run(); }, 6000);
+            learnTimer = setTimeout(() => { if (!streamingConvIds[convId]) void learnNow(convId, ask, personal); }, 6000);
           } else {
-            run();
+            void learnFromMessage(convId, userText, ask);
           }
         }
       }
@@ -1674,7 +1687,8 @@ async function startStream(
 
       if (shouldRecoverBranch) {
         await onErrorRecovery!();
-      } else if (parts.length === 0 && hadError && onErrorRecovery && wasViewing) {
+      } else if (parts.length === 0 && hadError && onErrorRecovery && (wasViewing || (myStash && swipeStash.get(convId) === myStash))) {
+        // (A failed regenerate in a chat that isn't open still gets its old answer back.)
         await onErrorRecovery();
       } else if (parts.length === 0 && !hadError && onErrorRecovery && myStash && swipeStash.get(convId) === myStash) {
         // Regenerate stopped (or empty) before any text: put the previous answer back.
@@ -1730,6 +1744,8 @@ async function startStream(
       setStreamingCodeBlocks([]);
       setStreamingCodeResults([]);
       if (onErrorRecovery) await onErrorRecovery();
+    } else if (onErrorRecovery && myStash && swipeStash.get(convId) === myStash) {
+      await onErrorRecovery();
     }
   }
 }
@@ -1738,15 +1754,27 @@ async function startStream(
 
 export async function sendMessage(text: string): Promise<void> {
   setChatError(null);
-  // Take the attachments right away, so a second tap can't send them again.
-  const attachments = [...pendingAttachments];
-  clearAttachments();
 
   let convId = activeConversationId();
 
   // Block only if this conversation is already streaming (background streaming
   // on other conversations is allowed).
   if (convId && streamingConvIds[convId]) return;
+  // Take the attachments right away, so a second tap can't send them again.
+  const attachments = [...pendingAttachments];
+  clearAttachments();
+  setSendBusyCount((n) => n + 1);
+  let held = true;
+  const release = () => { if (held) { held = false; setSendBusyCount((n) => Math.max(0, n - 1)); } };
+  try {
+    await sendMessageWith(convId, text, attachments, release);
+  } finally {
+    release();
+  }
+}
+
+async function sendMessageWith(startConvId: string | null, text: string, attachments: FileAttachment[], onStarted: () => void): Promise<void> {
+  let convId = startConvId;
 
   if (!convId) {
     convId = await createConversation(text.slice(0, 60));
@@ -1797,7 +1825,7 @@ export async function sendMessage(text: string): Promise<void> {
   const memCmd = parseMemoryCommand(text, !isCharChat);
   if (memCmd) memoryHints.set(convId, await handleMemoryCommand(memCmd, allMsgs));
 
-  await startStream(convId, contents, text, allMsgs.length, undefined, async () => {
+  await startStream(convId, contents, text, allMsgs.length, undefined, onStarted, async () => {
     // Remove orphaned user message from DB and store
     await db.messages.delete(userMsg.id);
     setMessages(produce((draft) => {
