@@ -116,6 +116,40 @@ function friendlyHttpError(status: number, body: string, providerName: string): 
   }
 }
 
+// === Pictures for models that can't see ===
+
+function hasImages(contents: GeminiContent[]): boolean {
+  return contents.some((c) => c.parts.some((p) => p.inlineData?.mimeType.startsWith("image/")));
+}
+
+/** Same chat without pictures, with a short note where they were. */
+function withoutImages(contents: GeminiContent[]): GeminiContent[] {
+  return contents.map((c) => {
+    const pics = c.parts.filter((p) => p.inlineData?.mimeType.startsWith("image/")).length;
+    if (!pics) return c;
+    return {
+      ...c,
+      parts: [
+        { text: `[The user attached ${pics === 1 ? "a picture" : `${pics} pictures`}, but this model can't see pictures.]\n` },
+        ...c.parts.filter((p) => !p.inlineData?.mimeType.startsWith("image/")),
+      ],
+    };
+  });
+}
+
+/** True when a 4xx error says the model doesn't take images. */
+function isImageRejection(status: number, body: string): boolean {
+  return status >= 400 && status < 500 && status !== 401 && status !== 429 &&
+    /image|vision|multimodal|multi-modal|image_url|content must be a string|unsupported content|does not support|not support/i.test(body);
+}
+
+/** OpenAI reasoning models (o1, o3, o4, gpt-5…) want max_completion_tokens instead of max_tokens. */
+function tokenLimitKey(model: string): "max_tokens" | "max_completion_tokens" {
+  return /(^|\/)(o\d|gpt-5)/i.test(model) ? "max_completion_tokens" : "max_tokens";
+}
+
+const IMAGE_SKIPPED = "This model can't see pictures, so the picture was left out. Pick a model with vision to send pictures.";
+
 // === SSE Reader ===
 
 async function readSse(
@@ -167,7 +201,7 @@ export async function streamOpenAI(
     stream: true,
     stream_options: { include_usage: true },
   };
-  if (maxTokens) body.max_tokens = maxTokens;
+  if (maxTokens) body[tokenLimitKey(model)] = maxTokens;
 
   let resp: Response;
   try {
@@ -188,7 +222,12 @@ export async function streamOpenAI(
   }
 
   if (!resp.ok) {
-    callbacks.onError?.(friendlyHttpError(resp.status, await resp.text().catch(() => ""), provider.name));
+    const text = await resp.text().catch(() => "");
+    if (hasImages(contents) && isImageRejection(resp.status, text)) {
+      callbacks.onNotice?.(IMAGE_SKIPPED);
+      return streamOpenAI(provider, model, withoutImages(contents), systemInstruction, callbacks, signal, maxTokens);
+    }
+    callbacks.onError?.(friendlyHttpError(resp.status, text, provider.name));
     callbacks.onDone?.();
     return;
   }
@@ -198,6 +237,12 @@ export async function streamOpenAI(
       if (data === "[DONE]") return;
       let j: any;
       try { j = JSON.parse(data); } catch { return; }
+      // OpenRouter / Groq can report errors inside a 200 stream.
+      if (j.error) {
+        const e = j.error;
+        callbacks.onError?.(`${provider.name}: ${typeof e === "string" ? e : e.message ?? "the model returned an error"}`);
+        return;
+      }
       const choice = j.choices?.[0];
       const delta = choice?.delta;
       if (delta) {
@@ -233,9 +278,13 @@ export async function sendOpenAI(
   const resp = await f(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${provider.apiKey}` },
-    body: JSON.stringify({ model, messages: toOpenAIMessages(contents, systemInstruction), ...(maxTokens ? { max_tokens: maxTokens } : {}) }),
+    body: JSON.stringify({ model, messages: toOpenAIMessages(contents, systemInstruction), ...(maxTokens ? { [tokenLimitKey(model)]: maxTokens } : {}) }),
   });
-  if (!resp.ok) throw new Error(friendlyHttpError(resp.status, await resp.text().catch(() => ""), provider.name));
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    if (hasImages(contents) && isImageRejection(resp.status, text)) return sendOpenAI(provider, model, withoutImages(contents), systemInstruction, maxTokens);
+    throw new Error(friendlyHttpError(resp.status, text, provider.name));
+  }
   const j = await resp.json();
   return j.choices?.[0]?.message?.content ?? "";
 }
@@ -286,7 +335,12 @@ export async function streamAnthropic(
   }
 
   if (!resp.ok) {
-    callbacks.onError?.(friendlyHttpError(resp.status, await resp.text().catch(() => ""), provider.name));
+    const text = await resp.text().catch(() => "");
+    if (hasImages(contents) && isImageRejection(resp.status, text)) {
+      callbacks.onNotice?.(IMAGE_SKIPPED);
+      return streamAnthropic(provider, model, withoutImages(contents), systemInstruction, callbacks, signal, maxTokens);
+    }
+    callbacks.onError?.(friendlyHttpError(resp.status, text, provider.name));
     callbacks.onDone?.();
     return;
   }

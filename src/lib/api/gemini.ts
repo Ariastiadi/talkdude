@@ -166,6 +166,8 @@ function toSdkContents(contents: GeminiContent[]): Content[] {
 export interface ChatOptions {
   /** Use the given system instruction instead of talkdude's own persona (character chats). */
   replaceBase?: boolean;
+  /** Lets the caller cancel a background request (e.g. learning on the on-device model). */
+  signal?: AbortSignal;
 }
 
 function localSystemText(systemInstruction: string | undefined, opts?: ChatOptions): string {
@@ -282,6 +284,8 @@ export interface StreamCallbacks {
   onGroundingMetadata?: (metadata: GeminiGroundingMetadata) => void;
   onUsage?: (usage: { promptTokens: number; outputTokens: number; totalTokens: number; thoughtsTokens?: number }) => void;
   onError?: (error: string) => void;
+  /** Short message for the user that is not part of the reply (shown as a toast). */
+  onNotice?: (message: string) => void;
   onDone?: () => void;
 }
 
@@ -416,7 +420,7 @@ export async function streamChat(
       callbacks.onDone?.();
       return;
     }
-    callbacks.onText?.(`_${modelLabel(current)} hit its limit, continuing with ${modelLabel(candidates[attempt + 1])}._\n\n`);
+    callbacks.onNotice?.(`${modelLabel(current)} hit its limit, continuing with ${modelLabel(candidates[attempt + 1])}.`);
   }
   callbacks.onDone?.();
 }
@@ -547,7 +551,7 @@ export async function sendChat(
   if (resolved.provider) {
     const sys = systemText(systemInstruction, opts);
     const text = resolved.provider.type === "local"
-      ? await sendLocal(resolved.model, contents, localSystemText(systemInstruction, opts), generationConfig?.maxOutputTokens)
+      ? await sendLocal(resolved.model, contents, localSystemText(systemInstruction, opts), generationConfig?.maxOutputTokens, opts?.signal)
       : resolved.provider.type === "anthropic"
       ? await sendAnthropic(resolved.provider, resolved.model, contents, sys, generationConfig?.maxOutputTokens)
       : await sendOpenAI(resolved.provider, resolved.model, contents, sys, generationConfig?.maxOutputTokens);

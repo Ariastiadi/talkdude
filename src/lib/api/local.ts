@@ -22,10 +22,16 @@ export interface LocalModel {
   /** Download size in bytes. */
   size: number;
   ctx: number;
+  /** Optional "eyes" (vision projector) so the model can look at pictures. */
+  vision?: { url: string; size: number };
+  /** Model thinks out loud (<think>…</think>) unless told not to. */
+  thinks?: boolean;
+  /** Needs the native engine (the browser engine doesn't know this model type). */
+  nativeOnly?: boolean;
 }
 
 // Ungated GGUF builds on Hugging Face (Apache-2.0 / Llama 3.2 Community License).
-export const LOCAL_MODELS: LocalModel[] = [
+const ALL_LOCAL_MODELS: LocalModel[] = [
   {
     key: "qwen2.5-0.5b",
     name: "Qwen 2.5 0.5B",
@@ -45,15 +51,63 @@ export const LOCAL_MODELS: LocalModel[] = [
   {
     key: "qwen2.5-1.5b",
     name: "Qwen 2.5 1.5B",
-    note: "Recommended. Much better answers; runs well on most phones from the last 5 years.",
+    note: "Good answers and fast on most phones from the last 5 years.",
     url: "https://huggingface.co/bartowski/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
     size: 986_048_768,
-    ctx: 4096,
+    ctx: 8192,
+  },
+  {
+    key: "qwen3.5-0.8b",
+    name: "Qwen 3.5 0.8B",
+    note: "Newer and small. Can look at pictures after adding “eyes”.",
+    url: "https://huggingface.co/bartowski/Qwen_Qwen3.5-0.8B-GGUF/resolve/main/Qwen_Qwen3.5-0.8B-Q4_K_M.gguf",
+    size: 579_615_840,
+    ctx: 8192,
+    vision: { url: "https://huggingface.co/bartowski/Qwen_Qwen3.5-0.8B-GGUF/resolve/main/mmproj-Qwen_Qwen3.5-0.8B-f16.gguf", size: 204_987_104 },
+    thinks: true,
+    nativeOnly: true,
+  },
+  {
+    key: "qwen3.5-2b",
+    name: "Qwen 3.5 2B",
+    note: "Smarter. Best for phones with 6 GB+ RAM. Can look at pictures after adding “eyes”.",
+    url: "https://huggingface.co/bartowski/Qwen_Qwen3.5-2B-GGUF/resolve/main/Qwen_Qwen3.5-2B-Q4_K_M.gguf",
+    size: 1_396_198_496,
+    ctx: 8192,
+    vision: { url: "https://huggingface.co/bartowski/Qwen_Qwen3.5-2B-GGUF/resolve/main/mmproj-Qwen_Qwen3.5-2B-f16.gguf", size: 668_227_136 },
+    thinks: true,
+    nativeOnly: true,
+  },
+  {
+    key: "qwen3.5-4b",
+    name: "Qwen 3.5 4B",
+    note: "Smartest. For PCs and phones with 8 GB+ RAM. Can look at pictures after adding “eyes”.",
+    url: "https://huggingface.co/bartowski/Qwen_Qwen3.5-4B-GGUF/resolve/main/Qwen_Qwen3.5-4B-Q4_K_M.gguf",
+    size: 3_013_027_808,
+    ctx: 8192,
+    vision: { url: "https://huggingface.co/bartowski/Qwen_Qwen3.5-4B-GGUF/resolve/main/mmproj-Qwen_Qwen3.5-4B-f16.gguf", size: 672_423_488 },
+    thinks: true,
+    nativeOnly: true,
   },
 ];
 
+export const LOCAL_MODELS: LocalModel[] = isTauri() ? ALL_LOCAL_MODELS : ALL_LOCAL_MODELS.filter((m) => !m.nativeOnly);
+
+/** Context window used on this device: phones get less to save memory. */
+export function deviceCtx(info: LocalModel): number {
+  return Math.min(info.ctx, isMobile() ? 4096 : 8192);
+}
+
+/** Suggested model for this device, from its RAM (navigator.deviceMemory reports up to 8 GB). */
+export function suggestedLocalModel(): string {
+  const mem = (navigator as { deviceMemory?: number }).deviceMemory ?? 4;
+  if (!isTauri()) return LOCAL_MODELS[0].key;
+  if (!isMobile()) return mem >= 8 ? "qwen3.5-4b" : "qwen3.5-2b";
+  return mem >= 6 ? "qwen3.5-2b" : "qwen2.5-1.5b";
+}
+
 /** Native engine is fast enough for the smarter 1.5B model; the browser engine is not. */
-export const DEFAULT_LOCAL_MODEL = isTauri() ? "qwen2.5-1.5b" : LOCAL_MODELS[0].key;
+export const DEFAULT_LOCAL_MODEL = isTauri() ? (isMobile() ? "qwen2.5-1.5b" : "qwen3.5-2b") : LOCAL_MODELS[0].key;
 
 /** True when the fast native engine (inside the app) is used. */
 export function nativeEngine(): boolean {
@@ -81,7 +135,19 @@ const [downloadedLocal, setDownloadedLocal] = createSignal<string[]>([]);
 const [downloadProgress, setDownloadProgress] = createSignal<Record<string, number>>({});
 /** Model currently being loaded into memory (first message after start). */
 const [loadingLocal, setLoadingLocal] = createSignal<string | null>(null);
-export { downloadedLocal, downloadProgress, loadingLocal };
+/** Keys of models whose "eyes" (vision file) are downloaded. */
+const [visionLocal, setVisionLocal] = createSignal<string[]>([]);
+export { downloadedLocal, downloadProgress, loadingLocal, visionLocal };
+
+/** Progress key used for the vision file download of a model. */
+export function visionKey(key: string): string {
+  return `${key}#vision`;
+}
+
+/** True when this on-device model can look at pictures right now (app only). */
+export function localCanSee(key: string): boolean {
+  return nativeEngine() && visionLocal().includes(key);
+}
 
 const downloadAborts = new Map<string, AbortController>();
 
@@ -237,7 +303,14 @@ async function nativeFiles(): Promise<{ file: string; size: number }[]> {
 }
 
 /** Models downloaded by the older WebAssembly engine (v1.1) are moved over instead of downloaded again. */
-async function migrateWebModels(have: Set<string>): Promise<void> {
+let migrating: Promise<void> | null = null;
+function migrateWebModels(have: Set<string>): Promise<void> {
+  // Only one move at a time: two would write into the same file.
+  if (!migrating) migrating = migrateWebModelsOnce(have).finally(() => { migrating = null; });
+  return migrating;
+}
+
+async function migrateWebModelsOnce(have: Set<string>): Promise<void> {
   if (!navigator.storage?.getDirectory) return;
   let mm: ModelManager;
   try { mm = await getManager(); } catch { return; }
@@ -270,20 +343,28 @@ async function migrateWebModels(have: Set<string>): Promise<void> {
   }
 }
 
+function visionFileOf(info: LocalModel): string | null {
+  return info.vision ? info.vision.url.split("/").pop()! : null;
+}
+
 async function refreshNative(): Promise<void> {
   const files = await nativeFiles();
   const have = new Set(LOCAL_MODELS.filter((m) => files.some((f) => f.file === fileOf(m) && f.size === m.size)).map((m) => m.key));
   setDownloadedLocal(LOCAL_MODELS.filter((m) => have.has(m.key)).map((m) => m.key));
+  setVisionLocal(LOCAL_MODELS.filter((m) => m.vision && files.some((f) => f.file === visionFileOf(m) && f.size === m.vision!.size)).map((m) => m.key));
   // Move v1.1 downloads over in the background.
   void migrateWebModels(have).then(() => setDownloadedLocal(LOCAL_MODELS.filter((m) => have.has(m.key)).map((m) => m.key)));
 }
 
-async function downloadNative(info: LocalModel): Promise<void> {
+async function downloadNative(info: LocalModel, part: "model" | "vision" = "model"): Promise<void> {
   const { invoke, Channel } = await tauriCore();
   const ch = new Channel<number>();
-  ch.onmessage = (written) => setDownloadProgress((p) => ({ ...p, [info.key]: Math.min(1, written / info.size) }));
+  const url = part === "vision" ? info.vision!.url : info.url;
+  const size = part === "vision" ? info.vision!.size : info.size;
+  const key = part === "vision" ? visionKey(info.key) : info.key;
+  ch.onmessage = (written) => setDownloadProgress((p) => ({ ...p, [key]: Math.min(1, written / size) }));
   try {
-    await invoke("llm_download", { url: info.url, file: fileOf(info), onProgress: ch });
+    await invoke("llm_download", { url, file: url.split("/").pop()!, onProgress: ch });
   } catch (e) {
     const msg = String(e);
     if (/cancel/i.test(msg)) throw new Error("Download cancelled.");
@@ -301,12 +382,14 @@ async function streamNative(
   maxOut: number,
 ): Promise<void> {
   const { invoke, Channel } = await tauriCore();
-  const nCtx = isMobile() ? 2048 : 4096;
-  if (nativeLoaded !== info.key) {
+  const nCtx = deviceCtx(info);
+  const eyes = visionLocal().includes(info.key) ? visionFileOf(info) : null;
+  const want = `${info.key}|${eyes ?? ""}`;
+  if (nativeLoaded !== want) {
     setLoadingLocal(info.key);
     try {
-      await invoke("llm_load", { file: fileOf(info), nCtx });
-      nativeLoaded = info.key;
+      await invoke("llm_load", { file: fileOf(info), nCtx, mmproj: eyes });
+      nativeLoaded = want;
     } finally {
       setLoadingLocal(null);
     }
@@ -316,10 +399,19 @@ async function streamNative(
   signal?.addEventListener("abort", onAbort);
   const ch = new Channel<string>();
   ch.onmessage = (t) => { if (!signal?.aborted && t) callbacks.onText?.(t); };
+  // Pictures in the newest user message go to the model when it has "eyes".
+  const lastUser = [...contents].reverse().find((c) => c.role === "user");
+  const images = eyes
+    ? (lastUser?.parts ?? []).filter((p) => p.inlineData?.mimeType.startsWith("image/")).slice(0, 3).map((p) => p.inlineData!.data)
+    : [];
   try {
     await invoke("llm_chat", {
       messages: toLocalMessages(contents, systemInstruction, nCtx, maxOut),
-      params: { maxTokens: maxOut, temperature: 0.7, topP: 0.9, topK: 40, repeatPenalty: 1.1 },
+      params: {
+        maxTokens: maxOut, temperature: 0.7, topP: 0.9, topK: 40, repeatPenalty: 1.1,
+        noThink: info.thinks ? !localThinking : undefined,
+      },
+      images,
       onToken: ch,
     });
   } finally {
@@ -390,8 +482,45 @@ export async function downloadLocalModel(key: string): Promise<void> {
 }
 
 export function cancelLocalDownload(key: string): void {
-  if (nativeEngine()) { void tauriCore().then(({ invoke }) => invoke("llm_cancel_download")); return; }
+  if (nativeEngine()) {
+    const base = key.replace(/#vision$/, "");
+    const info = localModelInfo(base);
+    const file = info ? (key.endsWith("#vision") ? visionFileOf(info) : fileOf(info)) : null;
+    void tauriCore().then(({ invoke }) => invoke("llm_cancel_download", { file }));
+    return;
+  }
   downloadAborts.get(key)?.abort();
+}
+
+/** Downloads the "eyes" so this model can look at pictures (app only). */
+export async function downloadLocalVision(key: string): Promise<void> {
+  const info = localModelInfo(key);
+  if (!info?.vision || !nativeEngine()) return;
+  const pk = visionKey(key);
+  if (downloadProgress()[pk] !== undefined) return;
+  setDownloadProgress((p) => ({ ...p, [pk]: 0 }));
+  try {
+    await downloadNative(info, "vision");
+    await refreshNative();
+  } finally {
+    setDownloadProgress((p) => { const n = { ...p }; delete n[pk]; return n; });
+  }
+}
+
+export async function deleteLocalVision(key: string): Promise<void> {
+  const info = localModelInfo(key);
+  const file = info ? visionFileOf(info) : null;
+  if (!file || !nativeEngine()) return;
+  const { invoke } = await tauriCore();
+  await invoke("llm_delete", { file });
+  nativeLoaded = null;
+  await refreshNative();
+}
+
+/** Lets small "thinking" models (Qwen 3.5) think step by step first. Slower, but better at hard questions. */
+let localThinking = false;
+export function setLocalThinking(on: boolean): void {
+  localThinking = on;
 }
 
 export async function deleteLocalModel(key: string): Promise<void> {
@@ -399,8 +528,10 @@ export async function deleteLocalModel(key: string): Promise<void> {
   if (!info) return;
   if (nativeEngine()) {
     const { invoke } = await tauriCore();
+    const eyes = visionFileOf(info);
     await invoke("llm_delete", { file: fileOf(info) });
-    if (nativeLoaded === key) nativeLoaded = null;
+    if (eyes) await invoke("llm_delete", { file: eyes }).catch(() => {});
+    if (nativeLoaded?.startsWith(key + "|")) nativeLoaded = null;
     await refreshNative();
     return;
   }
@@ -459,7 +590,7 @@ async function ensureLoaded(key: string): Promise<Wllama> {
     // Phones: smaller context and batches keep memory use low.
     const params = isMobile()
       ? { n_ctx: Math.min(info.ctx, 2048), n_batch: 256, n_ubatch: 256, n_threads: threads }
-      : { n_ctx: info.ctx, n_threads: threads };
+      : { n_ctx: Math.min(info.ctx, 4096), n_threads: threads };
     let w = make();
     // WebGPU on phones is still unreliable, so phones always use the CPU.
     const tryGpu = !isMobile() && !compat && w.isSupportWebGPU();
@@ -499,7 +630,11 @@ function toLocalMessages(contents: GeminiContent[], systemInstruction: string, c
     else msgs.push({ role, content: text });
   }
   // Keep the newest turns that fit the context window (≈3.5 characters per token).
+  // The system prompt (character, memories, web results…) may use at most half of it.
   const budget = Math.floor((ctx - maxOut - 64) * 3.5);
+  if (systemInstruction.length > budget / 2) {
+    systemInstruction = systemInstruction.slice(0, Math.floor(budget / 2)) + "\n[…]";
+  }
   let used = systemInstruction.length;
   const kept: ChatMsg[] = [];
   for (let i = msgs.length - 1; i >= 0; i--) {
@@ -545,7 +680,7 @@ export async function streamLocal(
       if (signal?.aborted) return;
       const info = localModelInfo(key)!;
       const maxOut = maxTokens ?? 768;
-      const messages = toLocalMessages(contents, systemInstruction, info.ctx, maxOut);
+      const messages = toLocalMessages(contents, systemInstruction, isMobile() ? Math.min(info.ctx, 2048) : Math.min(info.ctx, 4096), maxOut);
       const stream = await w.createChatCompletion({
         messages,
         max_tokens: maxOut,
@@ -584,10 +719,11 @@ export async function streamLocal(
   await p;
 }
 
-export async function sendLocal(key: string, contents: GeminiContent[], systemInstruction: string, maxTokens?: number): Promise<string> {
+export async function sendLocal(key: string, contents: GeminiContent[], systemInstruction: string, maxTokens?: number, signal?: AbortSignal): Promise<string> {
   let out = "";
   let err: string | null = null;
-  await streamLocal(key, contents, systemInstruction, { onText: (t) => { out += t; }, onError: (e) => { err = e; } }, undefined, maxTokens);
+  await streamLocal(key, contents, systemInstruction, { onText: (t) => { out += t; }, onError: (e) => { err = e; } }, signal, maxTokens);
+  if (signal?.aborted) throw new Error("cancelled");
   if (err) throw new Error(err);
   return out;
 }
