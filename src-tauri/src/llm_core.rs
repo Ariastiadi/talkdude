@@ -1,7 +1,7 @@
 //! llama.cpp prompt formatting and token generation (no Tauri types, so it can be tested alone).
 
 use std::num::NonZeroU32;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 
 use llama_cpp_2::context::params::LlamaContextParams;
 use llama_cpp_2::llama_backend::LlamaBackend;
@@ -71,10 +71,9 @@ pub fn generate(
     messages: &[ChatMessage],
     params: &GenParams,
     images: &[Vec<u8>],
-    epoch: u64,
+    cancelled: &dyn Fn() -> bool,
     on_token: &mut dyn FnMut(String),
 ) -> Result<(), String> {
-    let cancelled = || STOP_EPOCH.load(Ordering::SeqCst) != epoch;
     if cancelled() {
         return Ok(());
     }
