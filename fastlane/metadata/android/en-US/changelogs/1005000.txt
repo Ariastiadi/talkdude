@@ -1,0 +1,1 @@
+The built-in AI can see pictures (Qwen 3.5 with "eyes"). Newer, smarter on-device models, longer memory on phones, smarter reading of long files, Think mode and Run for code with every AI, memory Undo, resumable downloads, and many bug fixes.
