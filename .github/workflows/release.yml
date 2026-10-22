@@ -248,7 +248,7 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD || env.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD || env.ANDROID_KEY_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS || env.ANDROID_KEY_ALIAS }}
-        run: bun run tauri android build --apk --aab
+        run: bun run tauri android build --apk
 
       - name: Rename APKs
         run: |
@@ -259,8 +259,19 @@ jobs:
             renamed=$(echo "$filename" | sed 's/^app-universal-/talkdude-android-/' | sed 's/-release\././')
             cp "$apk" "out/$renamed"
           done < <(find src-tauri/gen/android/app/build/outputs/apk/ -name '*.apk' -type f)
-          # App bundle for Google Play (upload it in Play Console).
-          find src-tauri/gen/android/app/build/outputs/bundle/ -name '*.aab' -type f -exec cp {} out/talkdude-android-play.aab \; || true
+          ls -lh out/
+
+      # App bundle for Google Play (upload it in Play Console). Optional: never blocks the APKs.
+      - name: Build Play bundle
+        continue-on-error: true
+        env:
+          TALKDUDE_AAB: "1"
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD || env.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD || env.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS || env.ANDROID_KEY_ALIAS }}
+        run: |
+          bun run tauri android build --aab
+          find src-tauri/gen/android/app/build/outputs/bundle/ -name '*.aab' -type f -exec cp {} out/talkdude-android-play.aab \;
           ls -lh out/
 
       - name: Upload Android artifacts
