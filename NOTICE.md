@@ -51,3 +51,11 @@ Model weights are not bundled. They are downloaded on request from Hugging Face 
 ## PDF.js
 
 PDF text is read with [PDF.js](https://github.com/mozilla/pdf.js) by Mozilla and contributors, licensed under the Apache License 2.0. It is loaded only when you attach a PDF.
+
+## Pyodide
+
+The **Run** button for Python code uses [Pyodide](https://github.com/pyodide/pyodide) (Mozilla Public License 2.0). It is not bundled with talkdude: it is downloaded from the jsDelivr CDN the first time you run Python code.
+
+## Qwen 3.5
+
+The optional on-device Qwen 3.5 models and their vision projectors are made by the Qwen team (Alibaba Cloud), Apache License 2.0, and are downloaded from Hugging Face (bartowski's GGUF builds) only if you choose them.

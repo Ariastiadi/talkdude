@@ -1,6 +1,6 @@
 {
   "name": "talkdude",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "talkdude - multi-provider AI chat companion (Gemini, Claude, OpenAI, Groq, ...) for Android, Windows and Linux",
   "type": "module",
   "scripts": {
@@ -8,7 +8,10 @@
     "dev": "vite",
     "build": "vite build",
     "serve": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "bun test tests/unit",
+    "test:e2e": "node tests/e2e.mjs"
   },
   "license": "GPL-3.0-or-later",
   "dependencies": {
@@ -35,6 +38,7 @@
   "devDependencies": {
     "@tauri-apps/cli": "2.10.0",
     "@wllama/wllama-compat": "3.8.1",
+    "playwright": "1.63.0",
     "typescript": "5.6.3",
     "vite": "6.4.1",
     "vite-plugin-solid": "2.11.10"
