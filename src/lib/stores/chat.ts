@@ -21,6 +21,9 @@ import { isMobile } from "../platform";
 import {
   getCharacter, buildCharacterPrompt, buildPersonaPrompt, buildMemoryPrompt, fillNames, MAX_MEMORIES,
 } from "./characters";
+import { thinkFirst } from "./thinking";
+import { makeThinkSplitter, extractRememberTags } from "../think";
+import { setLocalThinking, localModelInfo, localCanSee } from "../api/local";
 import { thinkingEnabled, setThinkingEnabled, thinkingLevel, setThinkingLevel, usesLevelBasedThinking, modelSupportsThinking, modelAlwaysThinking, clampThinkingLevelForModel } from "./thinking";
 
 // === Helpers ===
@@ -66,6 +69,9 @@ const [streamingImages, setStreamingImages] = createStore<GeminiInlineData[]>([]
 const [streamingCodeBlocks, setStreamingCodeBlocks] = createStore<{ language: string; code: string }[]>([]);
 const [streamingCodeResults, setStreamingCodeResults] = createStore<{ outcome: string; output: string }[]>([]);
 const [chatError, setChatError] = createSignal<string | null>(null);
+/** Short notice for the user that isn't an error (shown as a toast). */
+const [chatNotice, setChatNotice] = createSignal<string | null>(null);
+export { chatNotice, setChatNotice };
 
 // Tool toggles
 const [searchEnabled, setSearchEnabled] = createSignal(false);
@@ -335,8 +341,11 @@ export function loadAttachmentsFromParts(parts: MessagePart[]): void {
 async function addLocalAttachment(file: File): Promise<void> {
   try {
     const lf = await readLocalFile(file);
-    if (lf.kind === "image" && isDeviceModelId(selectedModel())) {
-      throw new Error("The on-device AI can't see pictures yet. Switch to a cloud model (Gemini, GPT, Claude…) to send images, or attach a text file.");
+    if (lf.kind === "image" && isDeviceModelId(selectedModel()) && !localCanSee(selectedModel().split("::")[1] ?? "")) {
+      const info = localModelInfo(selectedModel().split("::")[1] ?? "");
+      throw new Error(info?.vision
+        ? `To send pictures to ${info.name}, add its “eyes” in Settings → On-device.`
+        : "This on-device model can't see pictures. Use Qwen 3.5 (Settings → On-device) or a cloud model.");
     }
     const att: FileAttachment = {
       id: crypto.randomUUID(),
@@ -382,6 +391,9 @@ function webBudget(): WebBudget {
 // === Spoken memory commands ("save to memory") ===
 
 const memoryHints = new Map<string, string>();
+/** Background learning request (so a new message can cancel it). */
+let learningAbort: AbortController | null = null;
+let learnTimer: ReturnType<typeof setTimeout> | undefined;
 
 async function handleMemoryCommand(cmd: MemoryCommand, msgs: Message[]): Promise<string> {
   if (!learningEnabled()) {
@@ -759,6 +771,8 @@ async function loadBranchState(conversationId: string): Promise<void> {
 export async function navigateBranch(branchGroupId: string, targetIndex: number): Promise<void> {
   const convId = activeConversationId();
   if (!convId) return;
+  // Switching versions while a reply is being written would put it on the wrong version.
+  if (streamingConvIds[convId]) return;
   const state = branchState[branchGroupId];
   if (!state || targetIndex === state.activeIndex || targetIndex < 0 || targetIndex >= state.total) return;
 
@@ -1164,7 +1178,11 @@ function buildContentsFromMessages(msgs: Message[], currentApiKeyHint: string | 
           case "inlineData":
             return { inlineData: { mimeType: p.mimeType, data: p.data } };
           case "fileText":
-            return { text: fileForModel(p.name, p.text, fileCharBudget()) };
+            // The message's own words pick the relevant parts of a long file.
+            return {
+              text: fileForModel(p.name, p.text, fileCharBudget(),
+                msg.parts.filter((x) => x.type === "text").map((x) => (x as { text: string }).text).join(" ")),
+            };
           case "fileData": {
             // Drop expired files; their content is gone from the Files API.
             if (p.expiresAt <= now) return null;
@@ -1371,6 +1389,13 @@ async function startStream(
   let hadError = false;
 
   const controller = new AbortController();
+  let stoppedAt: number | undefined;
+  controller.signal.addEventListener("abort", () => { stoppedAt = Date.now(); });
+  // A stopped stream can still finish later; it must not touch a newer stream's state.
+  const owns = () => backgroundStreams.get(convId)?.abortController === controller;
+  const myStash = swipeStash.get(convId);
+  // A background learning run on the on-device model would make this reply wait.
+  learningAbort?.abort();
   const isViewing = () => {
     if (activeConversationId() !== convId) return false;
     if (!branchCtx) return true;
@@ -1401,20 +1426,25 @@ async function startStream(
     setStreamingCodeResults([]);
   }
 
+  const addThinking = (chunk: string, signature?: string) => {
+    fullThinking += chunk;
+    if (signature) lastThoughtSignature = signature;
+    const bg = backgroundStreams.get(convId);
+    if (bg && owns()) bg.fullThinking = fullThinking;
+    if (isViewing() && owns()) setStreamingThinking(fullThinking);
+  };
+  // <think>…</think> from open models goes to the Thinking box.
+  const splitter = makeThinkSplitter((chunk) => {
+    fullText += chunk;
+    const bg = backgroundStreams.get(convId);
+    if (bg && owns()) bg.fullText = fullText;
+    if (isViewing() && owns()) setStreamingText(fullText.replace(/\[\[\s*(remember|ingat)\s*:[^\]]*\]?\]?\s*$/i, ""));
+  }, (t) => addThinking(t));
+
   const callbacks: StreamCallbacks = {
-    onText: (chunk) => {
-      fullText += chunk;
-      const bg = backgroundStreams.get(convId);
-      if (bg) bg.fullText = fullText;
-      if (isViewing()) setStreamingText(fullText);
-    },
-    onThinking: (chunk, signature) => {
-      fullThinking += chunk;
-      if (signature) lastThoughtSignature = signature;
-      const bg = backgroundStreams.get(convId);
-      if (bg) bg.fullThinking = fullThinking;
-      if (isViewing()) setStreamingThinking(fullThinking);
-    },
+    onText: (chunk) => splitter.feed(chunk),
+    onThinking: (chunk, signature) => addThinking(chunk, signature),
+    onNotice: (message) => { if (isViewing()) setChatNotice(message); },
     onInlineData: (data) => {
       collectedImages.push(data);
       if (isViewing()) setStreamingImages(produce((draft) => draft.push(data)));
@@ -1449,9 +1479,38 @@ async function startStream(
       if (isViewing()) setChatError(error);
     },
     onDone: async () => {
-      backgroundStreams.delete(convId);
-      setStreamingConvIds(produce((d) => { delete d[convId]; }));
-      setStreamingBranchCtx(produce((d) => { delete d[convId]; }));
+      splitter.flush();
+      const owned = owns();
+      if (owned) {
+        backgroundStreams.delete(convId);
+        setStreamingConvIds(produce((d) => { delete d[convId]; }));
+        setStreamingBranchCtx(produce((d) => { delete d[convId]; }));
+      }
+      const clearStreamingUi = () => {
+        // Only when no newer reply is being written in this chat.
+        if (!isViewing() || (!owned && streamingConvIds[convId])) return;
+        setStreamingText("");
+        setStreamingThinking("");
+        setStreamingImages([]);
+        setStreamingCodeBlocks([]);
+        setStreamingCodeResults([]);
+      };
+      // The chat was deleted while this reply was written: keep nothing.
+      if (!(await db.conversations.get(convId))) {
+        if (myStash && swipeStash.get(convId) === myStash) swipeStash.delete(convId);
+        clearStreamingUi();
+        return;
+      }
+
+      // "[[remember: …]]" from the AI: the user asked it to remember something in their own words.
+      const tagged = extractRememberTags(fullText);
+      if (tagged.facts.length) {
+        fullText = tagged.text;
+        if (/remember|memor|ingat|simpan|catat|jangan lupa|keep in mind|note (this|that)|save/i.test(userText) && learningEnabled()) {
+          for (const f of tagged.facts.slice(0, 2)) await rememberOnRequest(f);
+          skipLearning = true;
+        }
+      }
 
       const parts: MessagePart[] = [];
 
@@ -1502,10 +1561,11 @@ async function startStream(
           conversationId: convId,
           role: "model",
           parts,
-          createdAt: Date.now(),
+          // A stopped reply keeps its place even if a newer message came after it.
+          createdAt: stoppedAt ?? Date.now(),
         };
         // Regenerated reply: keep the earlier answers as swipes.
-        const stash = swipeStash.get(convId);
+        const stash = myStash && swipeStash.get(convId) === myStash ? myStash : undefined;
         if (stash) {
           swipeStash.delete(convId);
           assistantMsg.swipes = [...stash, toPlain(parts)];
@@ -1517,7 +1577,11 @@ async function startStream(
           await db.messages.put(assistantMsg);
           // Record before push so selectConversation can reconcile if it races.
           pendingCompletedMessages.set(convId, assistantMsg);
-          setMessages(produce((draft) => draft.push(assistantMsg)));
+          setMessages(produce((draft) => {
+            const i = draft.findIndex((m) => m.createdAt > assistantMsg.createdAt);
+            if (i === -1) draft.push(assistantMsg);
+            else draft.splice(i, 0, assistantMsg);
+          }));
         } else if (branchCtx) {
           // Record before the DB write so navigateBranch can reconcile if it races.
           const branchKey = `${branchCtx.branchGroupId}:${branchCtx.branchIndex}`;
@@ -1584,11 +1648,24 @@ async function startStream(
         }
         // Learn durable facts about the user from normal chats (best-effort, in the background).
         if (fullText && !isCharacterChat && !skipLearning) {
-          void learnFromMessage(convId, userText, async (prompt) => {
+          const run = () => void learnFromMessage(convId, userText, async (prompt) => {
             const learnModel = isGeminiModelId(model) ? TITLE_MODEL : model;
-            const r = await sendChat(learnModel, [{ role: "user", parts: [{ text: prompt }] }], { maxOutputTokens: 160 });
-            return r.parts.filter((p) => p.text && !p.thought).map((p) => p.text!).join("").trim();
+            const ac = new AbortController();
+            learningAbort = ac;
+            try {
+              const r = await sendChat(learnModel, [{ role: "user", parts: [{ text: prompt }] }], { maxOutputTokens: 160 }, undefined, { signal: ac.signal });
+              return r.parts.filter((p) => p.text && !p.thought).map((p) => p.text!).join("").trim();
+            } finally {
+              if (learningAbort === ac) learningAbort = null;
+            }
           });
+          // On-device: learn a little later, when the user is reading, and give way to the next message.
+          if (isDeviceModelId(model)) {
+            clearTimeout(learnTimer);
+            learnTimer = setTimeout(() => { if (!streamingConvIds[convId]) run(); }, 6000);
+          } else {
+            run();
+          }
         }
       }
 
@@ -1599,15 +1676,14 @@ async function startStream(
         await onErrorRecovery!();
       } else if (parts.length === 0 && hadError && onErrorRecovery && wasViewing) {
         await onErrorRecovery();
+      } else if (parts.length === 0 && !hadError && onErrorRecovery && myStash && swipeStash.get(convId) === myStash) {
+        // Regenerate stopped (or empty) before any text: put the previous answer back.
+        await onErrorRecovery();
       }
+      if (myStash && swipeStash.get(convId) === myStash) swipeStash.delete(convId);
 
-      if (wasViewing) {
-        setStreamingText("");
-        setStreamingThinking("");
-        setStreamingImages([]);
-        setStreamingCodeBlocks([]);
-        setStreamingCodeResults([]);
-      }
+      void wasViewing;
+      clearStreamingUi();
     },
   };
 
@@ -1615,6 +1691,15 @@ async function startStream(
     skipLearning = memoryHints.has(convId);
     const sys = buildSystemFor(convId, userText);
     let systemText = sys.text;
+    if (!isGeminiModelId(model)) {
+      const local = isDeviceModelId(model) ? localModelInfo(model.split("::")[1] ?? "") : undefined;
+      if (local?.thinks) {
+        // Qwen 3.5 thinks on its own; without "Think first" it answers straight away (faster).
+        setLocalThinking(thinkFirst());
+      } else if (thinkFirst()) {
+        systemText = [systemText, "Before answering, think step by step inside <think></think>, then give the final answer after </think>."].filter(Boolean).join("\n\n");
+      }
+    }
 
     // Web search / link reading for models other than Gemini: the app looks things up itself.
     if (!isGeminiModelId(model) && (searchEnabled() || urlContextEnabled()) && userText.trim()) {
@@ -1633,6 +1718,7 @@ async function startStream(
     await streamChat(model, contents, generationConfig, systemText, callbacks, controller.signal, tools, { replaceBase: sys.replaceBase });
   } catch (err) {
     // Network error: streamChat threw before callbacks fired.
+    if (!owns()) return;
     backgroundStreams.delete(convId);
     setStreamingConvIds(produce((d) => { delete d[convId]; }));
     setStreamingBranchCtx(produce((d) => { delete d[convId]; }));
@@ -1652,6 +1738,9 @@ async function startStream(
 
 export async function sendMessage(text: string): Promise<void> {
   setChatError(null);
+  // Take the attachments right away, so a second tap can't send them again.
+  const attachments = [...pendingAttachments];
+  clearAttachments();
 
   let convId = activeConversationId();
 
@@ -1668,7 +1757,6 @@ export async function sendMessage(text: string): Promise<void> {
   const now = Date.now();
   const currentKeyHint = await getCurrentApiKeyHint();
 
-  const attachments = [...pendingAttachments];
   for (const att of attachments) {
     if (att.uploading || att.uploadError) continue;
     const localPart = localAttachmentPart(att);
@@ -1690,8 +1778,6 @@ export async function sendMessage(text: string): Promise<void> {
   if (text.trim()) {
     userParts.push({ type: "text", text });
   }
-
-  clearAttachments();
 
   const userMsg: Message = {
     id: crypto.randomUUID(),
@@ -1756,6 +1842,9 @@ function buildSystemFor(convId: string, userText = ""): { text: string | undefin
     buildMemoryPrompt(conv?.memories),
     getActiveSystemInstruction(),
     hint ? `[Memory update] ${hint}` : undefined,
+    !character && !hint && learningEnabled() && /remember|memor|ingat|simpan|catat|jangan lupa|keep in mind|note (this|that)/i.test(userText)
+      ? "If the user asks you to remember something about them, also add one line at the very end: [[remember: <the fact, short, in third person>]]"
+      : undefined,
   ].filter((b): b is string => !!b && b.trim().length > 0);
   return { text: blocks.length ? blocks.join("\n\n") : undefined, replaceBase: !!character };
 }

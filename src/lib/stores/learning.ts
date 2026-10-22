@@ -30,12 +30,23 @@ const [notes, setNotesSignal] = createSignal<LearnedNote[]>([]);
 const [learningEnabled, setLearningEnabledSignal] = createSignal(true);
 /** Last note learned, for a small "Remembered: …" toast. */
 const [lastLearned, setLastLearned] = createSignal<string | null>(null);
-/** Toast text for spoken commands ("save to memory", "forget …"). */
-const [memoryNotice, setMemoryNotice] = createSignal<string | null>(null);
+/** Toast for memory changes ("Saved to memory …"), optionally with an Undo action. */
+export interface MemoryNotice { text: string; undo?: () => void }
+const [memoryNotice, setMemoryNoticeSignal] = createSignal<MemoryNotice | null>(null);
+function setMemoryNotice(n: MemoryNotice | string | null): void {
+  setMemoryNoticeSignal(typeof n === "string" ? { text: n } : n);
+}
 export { notes, learningEnabled, lastLearned, setLastLearned, memoryNotice, setMemoryNotice };
 
-async function persist(list: LearnedNote[]): Promise<void> {
+let persistTimer: ReturnType<typeof setTimeout> | undefined;
+async function persist(list: LearnedNote[], lazy = false): Promise<void> {
   setNotesSignal(list);
+  clearTimeout(persistTimer);
+  // Use counters change on every message; write them a little later in one go.
+  if (lazy) {
+    persistTimer = setTimeout(() => { void db.settings.put({ key: NOTES_KEY, value: notes() }).catch(() => {}); }, 4000);
+    return;
+  }
   try { await db.settings.put({ key: NOTES_KEY, value: list }); } catch { /* ignore */ }
 }
 
@@ -46,6 +57,18 @@ export async function loadLearning(): Promise<void> {
     const e = (await db.settings.get(ENABLED_KEY))?.value;
     setLearningEnabledSignal(e !== false);
   } catch { /* ignore */ }
+}
+
+/** Adds notes from a backup without dropping the ones already here. */
+export async function mergeNotes(incoming: unknown): Promise<void> {
+  if (!Array.isArray(incoming)) return;
+  const byId = new Map(notes().map((n) => [n.id, n]));
+  for (const n of incoming as LearnedNote[]) {
+    if (!n || typeof n.text !== "string" || typeof n.id !== "string") continue;
+    const cur = byId.get(n.id);
+    if (!cur || (n.updatedAt ?? 0) > cur.updatedAt) byId.set(n.id, n);
+  }
+  await persist([...byId.values()].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_NOTES));
 }
 
 export async function setLearningEnabled(on: boolean): Promise<void> {
@@ -60,8 +83,59 @@ const STOP = new Set(("the a an and or but if then so to of in on at for with fr
   "yang dan atau di ke dari ini itu aku saya kamu dia kita kami mereka ada tidak bukan juga sudah belum akan bisa mau " +
   "untuk dengan pada dalam karena jadi kalau apa siapa kenapa gimana ya sih dong kok aja deh nih").split(" "));
 
+/** Rough word stem (English and Indonesian), so "cats"/"cat" and "kucingku"/"kucing" match. */
+function stem(w: string): string {
+  let x = w;
+  if (x.length > 5) x = x.replace(/(nya|ku|mu|lah|kah|pun)$/, "");
+  if (x.length > 6) x = x.replace(/^(meng|meny|mem|men|me|ber|be|di|ter|pe|ke|se)/, "");
+  if (x.length > 5) x = x.replace(/(kan|an|i)$/, "");
+  if (x.length > 4) x = x.replace(/(ies)$/, "y").replace(/(ing|ed|es|s)$/, "");
+  return x;
+}
+
+/**
+ * Topic groups in English and Indonesian. A note and a question that share a topic
+ * count as related even without the same words ("kopi" ↔ "favourite drink").
+ */
+const TOPICS: Record<string, string[]> = {
+  food: ["food", "eat", "meal", "dish", "cook", "recipe", "spicy", "breakfast", "lunch", "dinner", "makan", "makanan", "masak", "pedas", "sarapan", "rendang", "nasi", "sate", "bakso", "mie", "pizza", "burger", "sushi", "vegetarian", "vegan", "halal", "kuliner"],
+  drink: ["drink", "coffee", "tea", "juice", "milk", "beer", "wine", "soda", "minum", "minuman", "kopi", "teh", "jus", "susu", "latte", "espresso", "boba", "cappuccino"],
+  family: ["family", "wife", "husband", "son", "daughter", "child", "children", "kid", "mother", "father", "mom", "dad", "brother", "sister", "parent", "keluarga", "istri", "suami", "anak", "ibu", "ayah", "bapak", "mama", "papa", "kakak", "adik", "cucu", "orang tua"],
+  pet: ["pet", "cat", "dog", "fish", "bird", "rabbit", "hamster", "kucing", "anjing", "ikan", "burung", "kelinci", "peliharaan"],
+  work: ["work", "job", "office", "company", "boss", "career", "colleague", "meeting", "salary", "kerja", "pekerjaan", "kantor", "perusahaan", "bos", "karier", "rekan", "rapat", "komisaris", "direktur", "manager", "engineer", "developer"],
+  study: ["school", "study", "college", "university", "campus", "exam", "class", "student", "sekolah", "kuliah", "kampus", "ujian", "kelas", "belajar", "skripsi", "mahasiswa", "siswa"],
+  place: ["live", "city", "country", "home", "house", "address", "town", "tinggal", "kota", "negara", "rumah", "alamat", "jakarta", "bandung", "surabaya", "bali", "yogyakarta", "indonesia", "domisili"],
+  hobby: ["hobby", "like", "love", "enjoy", "favorite", "favourite", "play", "game", "music", "song", "movie", "film", "book", "read", "sport", "football", "hobi", "suka", "senang", "favorit", "main", "musik", "lagu", "nonton", "buku", "baca", "olahraga", "bola"],
+  health: ["sport", "gym", "run", "diet", "sleep", "allergy", "allergic", "olahraga", "lari", "tidur", "alergi"],
+  language: ["english", "indonesian", "language", "bahasa", "inggris", "jawa", "sunda"],
+  style: ["short", "long", "answer", "reply", "formal", "casual", "tone", "explain", "singkat", "panjang", "jawaban", "santai", "penjelasan"],
+  name: ["name", "called", "nama", "panggil", "dipanggil"],
+  money: ["money", "budget", "save", "invest", "stock", "crypto", "uang", "anggaran", "tabungan", "investasi", "saham", "kripto"],
+  tech: ["app", "phone", "laptop", "computer", "code", "program", "android", "windows", "aplikasi", "komputer", "coding", "github"],
+  travel: ["travel", "trip", "holiday", "vacation", "flight", "hotel", "liburan", "jalan", "perjalanan", "mudik", "pesawat"],
+  plan: ["plan", "goal", "want", "dream", "tomorrow", "next", "rencana", "tujuan", "ingin", "pengen", "mimpi", "besok", "target"],
+};
+const TOPIC_OF = new Map<string, string>();
+for (const [topic, list] of Object.entries(TOPICS)) for (const w of list) TOPIC_OF.set(stem(w), topic);
+
 function words(s: string): string[] {
-  return (s.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []).filter((w) => !STOP.has(w));
+  return (s.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []).filter((w) => !STOP.has(w)).map(stem);
+}
+
+/** Words plus topic tags (e.g. "#drink"), cached per note text. */
+const featureCache = new Map<string, Set<string>>();
+function features(s: string): Set<string> {
+  const hit = featureCache.get(s);
+  if (hit) return hit;
+  const f = new Set<string>();
+  for (const w of words(s)) {
+    f.add(w);
+    const t = TOPIC_OF.get(w);
+    if (t) f.add("#" + t);
+  }
+  if (featureCache.size > 6000) featureCache.clear();
+  featureCache.set(s, f);
+  return f;
 }
 
 function similarity(a: string, b: string): number {
@@ -123,19 +197,24 @@ export async function clearNotes(): Promise<void> {
 export function relevantNotes(query: string, limit: number): LearnedNote[] {
   const list = notes();
   if (!list.length) return [];
-  const q = new Set(words(query));
+  const q = features(query);
   const now = Date.now();
-  const noteWords = list.map((n) => new Set(words(n.text)));
+  const noteFeats = list.map((n) => features(n.text));
   const df = new Map<string, number>();
-  for (const ws of noteWords) for (const w of ws) df.set(w, (df.get(w) ?? 0) + 1);
+  for (const fs of noteFeats) for (const w of fs) df.set(w, (df.get(w) ?? 0) + 1);
   const N = list.length;
   const scored = list.map((n, i) => {
     let overlap = 0;
-    for (const w of noteWords[i]) {
-      if (q.has(w)) overlap += Math.log(1 + (N - (df.get(w) ?? 0) + 0.5) / ((df.get(w) ?? 0) + 0.5));
+    for (const w of noteFeats[i]) {
+      if (!q.has(w)) continue;
+      const idf = Math.log(1 + (N - (df.get(w) ?? 0) + 0.5) / ((df.get(w) ?? 0) + 0.5));
+      // A shared topic counts a bit less than a shared word.
+      overlap += w.startsWith("#") ? idf * 0.6 : idf;
     }
     const ageDays = (now - n.updatedAt) / 86_400_000;
-    return { n, score: overlap * 3 + Math.max(0, 2 - ageDays / 15) + Math.min(n.uses, 20) * 0.05 };
+    // Basics like the user's name and how they like answers are always useful.
+    const core = noteFeats[i].has("#name") || noteFeats[i].has("#style") || noteFeats[i].has("#language") ? 1.5 : 0;
+    return { n, score: overlap * 3 + core + Math.max(0, 2 - ageDays / 15) + Math.min(n.uses, 20) * 0.05 };
   });
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, limit).map((s) => s.n);
@@ -148,7 +227,7 @@ export function buildLearnedPrompt(query: string, limit = 12): string | undefine
   if (!picked.length) return undefined;
   // Count uses without awaiting (cheap, best-effort).
   const ids = new Set(picked.map((p) => p.id));
-  void persist(notes().map((n) => (ids.has(n.id) ? { ...n, uses: n.uses + 1 } : n)));
+  void persist(notes().map((n) => (ids.has(n.id) ? { ...n, uses: n.uses + 1 } : n)), true);
   return "[What you know about the user from earlier chats — use it naturally, don't list it back]\n" +
     picked.map((p) => `- ${p.text}`).join("\n");
 }
@@ -157,9 +236,13 @@ export function buildLearnedPrompt(query: string, limit = 12): string | undefine
 
 /** Saves a fact the user asked to be remembered. Returns the saved text, or null. */
 export async function rememberOnRequest(text: string): Promise<string | null> {
+  const before = notes();
   const note = await addNote(text);
   if (!note) return null;
-  setMemoryNotice(`Saved to memory: ${note.text.length > 70 ? note.text.slice(0, 67) + "…" : note.text}`);
+  setMemoryNotice({
+    text: `Saved to memory: ${note.text.length > 70 ? note.text.slice(0, 67) + "…" : note.text}`,
+    undo: () => { void persist(before); },
+  });
   return note.text;
 }
 
@@ -177,8 +260,12 @@ export async function forgetOnRequest(query: string): Promise<string | null> {
     if (hit > 0 && (!best || score > best.score)) best = { n, score };
   }
   if (!best || best.score < 0.5) return null;
+  const before = notes();
   await deleteNote(best.n.id);
-  setMemoryNotice(`Removed from memory: ${best.n.text.length > 70 ? best.n.text.slice(0, 67) + "…" : best.n.text}`);
+  setMemoryNotice({
+    text: `Removed from memory: ${best.n.text.length > 70 ? best.n.text.slice(0, 67) + "…" : best.n.text}`,
+    undo: () => { void persist(before); },
+  });
   return best.n.text;
 }
 
@@ -213,7 +300,8 @@ export async function learnFromMessage(convId: string, userText: string, ask: (p
   if (worthLearning(userText)) queue.push(userText.slice(0, 600));
   pendingByConv.set(convId, queue);
   if (!queue.length || learning) return;
-  const personal = /\b(my name|nama(ku| saya)|i am|i'm|aku|saya)\b/i.test(userText);
+  // Learn right away only for clearly personal facts; otherwise wait for a few messages.
+  const personal = /\b(my name|call me|i live|i work|i study|i like|i love|i hate|i prefer|my (wife|husband|son|daughter|kid|cat|dog|job|birthday)|nama(ku| saya| aku)|panggil (aku|saya)|(aku|saya|gue|gw) (tinggal|kerja|bekerja|kuliah|sekolah|suka|benci|lebih suka|punya|lahir)|istri(ku| saya)|suami(ku| saya)|anak(ku| saya)|ulang tahun(ku| saya))\b/i.test(userText);
   if (queue.length < 3 && !personal) return;
 
   learning = true;

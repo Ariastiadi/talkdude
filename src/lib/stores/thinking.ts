@@ -6,9 +6,13 @@ import { AVAILABLE_MODELS } from "../api/types";
 const [thinkingEnabled, setThinkingEnabled] = createSignal(true);
 const [thinkingLevel, setThinkingLevel] = createSignal<"low" | "medium" | "high">("high");
 
+/** "Think first" for models other than Gemini (they reason step by step before answering). */
+const [thinkFirst, setThinkFirst] = createSignal(false);
+
 export {
   thinkingEnabled, setThinkingEnabled,
   thinkingLevel, setThinkingLevel,
+  thinkFirst, setThinkFirst,
 };
 
 // === Helpers ===
