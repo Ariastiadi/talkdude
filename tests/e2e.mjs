@@ -94,6 +94,22 @@ await page.locator(".md-code-run").last().click();
 await wait(1500);
 check("JS Run output", ((await page.locator(".md-code-output").last().innerText().catch(() => "")) || "").includes("42"));
 
+// 3b. Run code can't read the app's data (sandboxed, empty origin)
+nextReply = "```js\nlet r = 'readable';\ntry { await new Promise((ok, no) => { const q = indexedDB.open('talkdude'); q.onsuccess = ok; q.onerror = no; }); } catch (e) { r = 'blocked'; }\nconsole.log(r)\n```";
+await send("check storage");
+await page.locator(".md-code-run").last().click();
+await wait(1500);
+check("Run is sandboxed", ((await page.locator(".md-code-output").last().innerText().catch(() => "")) || "").includes("blocked"));
+
+// 3c. A double tap sends only once
+nextReply = "Once.";
+const before = await page.locator(".message-user").count();
+await page.locator("textarea").first().fill("double tap test");
+await page.keyboard.press("Enter");
+await page.keyboard.press("Enter");
+await wait(1500);
+check("double tap sends once", (await page.locator(".message-user").count()) === before + 1);
+
 // 4. Web search and links for a non-Gemini model
 nextReply = "Okay!";
 await page.locator(".toolbar-menu-anchor md-icon-button").first().click();
