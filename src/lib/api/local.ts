@@ -296,6 +296,10 @@ async function tauriCore() {
 }
 
 let nativeLoaded: string | null = null;
+/** Models whose "eyes" failed to load this session (text-only until restart). */
+const eyesFailed = new Set<string>();
+let reqCounter = 0;
+
 
 async function nativeFiles(): Promise<{ file: string; size: number }[]> {
   const { invoke } = await tauriCore();
@@ -380,38 +384,48 @@ async function streamNative(
   callbacks: StreamCallbacks,
   signal: AbortSignal | undefined,
   maxOut: number,
+  forceNoThink = false,
 ): Promise<void> {
   const { invoke, Channel } = await tauriCore();
   const nCtx = deviceCtx(info);
-  const eyes = visionLocal().includes(info.key) ? visionFileOf(info) : null;
+  const eyes = visionLocal().includes(info.key) && !eyesFailed.has(info.key) ? visionFileOf(info) : null;
   const want = `${info.key}|${eyes ?? ""}`;
   if (nativeLoaded !== want) {
     setLoadingLocal(info.key);
     try {
-      await invoke("llm_load", { file: fileOf(info), nCtx, mmproj: eyes });
-      nativeLoaded = want;
+      const seeing = await invoke<boolean>("llm_load", { file: fileOf(info), nCtx, mmproj: eyes });
+      if (eyes && !seeing) {
+        // The eyes file didn't load (old phone, damaged file): keep chatting with text only.
+        eyesFailed.add(info.key);
+        callbacks.onNotice?.("Picture support couldn't be loaded on this device, so pictures are left out.");
+        nativeLoaded = `${info.key}|`;
+      } else {
+        nativeLoaded = want;
+      }
     } finally {
       setLoadingLocal(null);
     }
   }
   if (signal?.aborted) return;
-  const onAbort = () => { void invoke("llm_stop"); };
+  const reqId = Date.now() * 1000 + (++reqCounter % 1000);
+  const onAbort = () => { void invoke("llm_stop", { reqId }); };
   signal?.addEventListener("abort", onAbort);
   const ch = new Channel<string>();
   ch.onmessage = (t) => { if (!signal?.aborted && t) callbacks.onText?.(t); };
   // Pictures in the newest user message go to the model when it has "eyes".
   const lastUser = [...contents].reverse().find((c) => c.role === "user");
-  const images = eyes
+  const images = nativeLoaded === want && eyes
     ? (lastUser?.parts ?? []).filter((p) => p.inlineData?.mimeType.startsWith("image/")).slice(0, 3).map((p) => p.inlineData!.data)
     : [];
   try {
     await invoke("llm_chat", {
-      messages: toLocalMessages(contents, systemInstruction, nCtx, maxOut),
+      messages: toLocalMessages(contents, systemInstruction, nCtx, maxOut, images.length > 0),
       params: {
         maxTokens: maxOut, temperature: 0.7, topP: 0.9, topK: 40, repeatPenalty: 1.1,
-        noThink: info.thinks ? !localThinking : undefined,
+        noThink: info.thinks ? (forceNoThink || !localThinking) : undefined,
       },
       images,
+      reqId,
       onToken: ch,
     });
   } finally {
@@ -498,6 +512,7 @@ export async function downloadLocalVision(key: string): Promise<void> {
   if (!info?.vision || !nativeEngine()) return;
   const pk = visionKey(key);
   if (downloadProgress()[pk] !== undefined) return;
+  eyesFailed.delete(key);
   setDownloadProgress((p) => ({ ...p, [pk]: 0 }));
   try {
     await downloadNative(info, "vision");
@@ -513,6 +528,7 @@ export async function deleteLocalVision(key: string): Promise<void> {
   if (!file || !nativeEngine()) return;
   const { invoke } = await tauriCore();
   await invoke("llm_delete", { file });
+  eyesFailed.delete(key);
   nativeLoaded = null;
   await refreshNative();
 }
@@ -618,17 +634,22 @@ async function ensureLoaded(key: string): Promise<Wllama> {
 
 type ChatMsg = { role: "system" | "user" | "assistant"; content: string };
 
-function toLocalMessages(contents: GeminiContent[], systemInstruction: string, ctx: number, maxOut: number): ChatMsg[] {
+function toLocalMessages(contents: GeminiContent[], systemInstruction: string, ctx: number, maxOut: number, picturesNow = false): ChatMsg[] {
   const msgs: ChatMsg[] = [];
-  for (const c of contents) {
-    const text = c.parts.filter((p) => p.text && !p.thought).map((p) => p.text!).join("").trim();
-    if (!text) continue;
+  const lastUserIdx = contents.map((c) => c.role).lastIndexOf("user");
+  contents.forEach((c, idx) => {
+    let text = c.parts.filter((p) => p.text && !p.thought).map((p) => p.text!).join("").trim();
+    // A picture sent without words still is a turn. Only the newest one is actually shown to the model.
+    if (!text && c.role === "user" && c.parts.some((p) => p.inlineData?.mimeType.startsWith("image/"))) {
+      text = idx === lastUserIdx && picturesNow ? "(Look at the picture.)" : "(The user shared a picture.)";
+    }
+    if (!text) return;
     const role = c.role === "model" ? "assistant" : "user";
     const last = msgs[msgs.length - 1];
     // Chat templates expect alternating turns.
     if (last && last.role === role) last.content += "\n\n" + text;
     else msgs.push({ role, content: text });
-  }
+  });
   // Keep the newest turns that fit the context window (≈3.5 characters per token).
   // The system prompt (character, memories, web results…) may use at most half of it.
   const budget = Math.floor((ctx - maxOut - 64) * 3.5);
@@ -657,6 +678,8 @@ export async function streamLocal(
   callbacks: StreamCallbacks,
   signal?: AbortSignal,
   maxTokens?: number,
+  /** Background requests (learning) answer directly, without thinking first. */
+  noThink = false,
 ): Promise<void> {
   const run = async () => {
     if (nativeEngine()) {
@@ -664,7 +687,7 @@ export async function streamLocal(
         const info = localModelInfo(key);
         if (!info) throw new Error("This on-device model is not available.");
         if (!downloadedLocal().includes(key)) throw new Error(`${info.name} is not downloaded yet. Download it in Settings → On-device.`);
-        await streamNative(info, contents, systemInstruction, callbacks, signal, maxTokens ?? 768);
+        await streamNative(info, contents, systemInstruction, callbacks, signal, maxTokens ?? 768, noThink);
       } catch (e) {
         if (!signal?.aborted) {
           nativeLoaded = null;
@@ -722,8 +745,10 @@ export async function streamLocal(
 export async function sendLocal(key: string, contents: GeminiContent[], systemInstruction: string, maxTokens?: number, signal?: AbortSignal): Promise<string> {
   let out = "";
   let err: string | null = null;
-  await streamLocal(key, contents, systemInstruction, { onText: (t) => { out += t; }, onError: (e) => { err = e; } }, signal, maxTokens);
+  await streamLocal(key, contents, systemInstruction, { onText: (t) => { out += t; }, onError: (e) => { err = e; } }, signal, maxTokens, true);
   if (signal?.aborted) throw new Error("cancelled");
+  // Background answers never keep the model's reasoning.
+  out = out.replace(/<think>[\s\S]*?<\/think>/g, "").replace(/^[\s\S]*<\/think>/, "").trim();
   if (err) throw new Error(err);
   return out;
 }
