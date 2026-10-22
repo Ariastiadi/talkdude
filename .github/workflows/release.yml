@@ -10,6 +10,41 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Fast checks first: types, unit tests and an end-to-end run of the web build
+  # with a mocked AI. A release is only published when these pass.
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Type check
+        run: bun run typecheck
+
+      - name: Unit tests
+        run: bun run test
+
+      - name: Build web app
+        run: bun run build
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: End-to-end tests
+        run: node tests/e2e.mjs
+
   build-linux:
     name: Build Linux
     runs-on: ubuntu-latest
@@ -213,7 +248,7 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD || env.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD || env.ANDROID_KEY_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS || env.ANDROID_KEY_ALIAS }}
-        run: bun run tauri android build --apk
+        run: bun run tauri android build --apk --aab
 
       - name: Rename APKs
         run: |
@@ -224,26 +259,93 @@ jobs:
             renamed=$(echo "$filename" | sed 's/^app-universal-/talkdude-android-/' | sed 's/-release\././')
             cp "$apk" "out/$renamed"
           done < <(find src-tauri/gen/android/app/build/outputs/apk/ -name '*.apk' -type f)
+          # App bundle for Google Play (upload it in Play Console).
+          find src-tauri/gen/android/app/build/outputs/bundle/ -name '*.aab' -type f -exec cp {} out/talkdude-android-play.aab \; || true
           ls -lh out/
 
       - name: Upload Android artifacts
         uses: actions/upload-artifact@v4
         with:
           name: talkdude-android
-          path: out/*.apk
+          path: |
+            out/*.apk
+            out/*.aab
+
+  # Apple Silicon Macs. Not signed with an Apple developer ID, so the first
+  # launch needs right-click → Open. A failure here doesn't block the release.
+  build-macos:
+    name: Build macOS
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            src-tauri/target/
+          key: ${{ runner.os }}-cargo-macos-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-macos-
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate app icons
+        run: bun run tauri icon app-icon.svg
+
+      - name: Build macOS app
+        run: |
+          rm -rf src-tauri/target/release/bundle/
+          bun run tauri build --bundles dmg
+
+      - name: Rename macOS artifacts
+        run: |
+          mkdir -p out
+          cp src-tauri/target/release/bundle/dmg/*.dmg out/talkdude-macos-arm64.dmg
+          ls -lh out/
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: talkdude-macos
+          path: out/*
 
   # Publishes a GitHub Release automatically. The tag is taken from a pushed
   # v* tag, or from "version" in src-tauri/tauri.conf.json on pushes to main
   # (so bumping the version = a new release; Obtainium picks it up).
   release:
     name: Create Release
-    needs: [build-linux, build-windows, build-android]
+    needs: [test, build-linux, build-windows, build-android, build-macos]
+    # macOS is optional; everything else must pass.
+    if: ${{ !cancelled() && needs.test.result == 'success' && needs.build-linux.result == 'success' && needs.build-windows.result == 'success' && needs.build-android.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      # APKs signed with a temporary key can't update existing installs, so never publish them.
+      - name: Require the release signing key
+        env:
+          HAS_KEY: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        run: |
+          if [ "$HAS_KEY" != "true" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 secret is missing; not publishing APKs that can't update existing installs."
+            exit 1
+          fi
 
       - name: Decide release tag
         id: tag
@@ -271,7 +373,7 @@ jobs:
         if: steps.tag.outputs.skip != '1'
         run: |
           mkdir -p release
-          find artifacts -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' -o -name '*.msi' -o -name '*.exe' -o -name '*.apk' \) -exec mv {} release/ \;
+          find artifacts -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' -o -name '*.msi' -o -name '*.exe' -o -name '*.apk' -o -name '*.aab' -o -name '*.dmg' \) -exec mv {} release/ \;
           ls -la release/
 
       - name: Create Release
