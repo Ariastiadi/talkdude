@@ -7,16 +7,19 @@
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
 use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::LlamaModel;
+use llama_cpp_2::mtmd::{mtmd_default_marker, MtmdContext, MtmdContextParams};
 use serde::Serialize;
 
-use crate::llm_core::{self, ChatMessage, GenParams, Loaded, GEN_CANCEL};
+use crate::llm_core::{self, ChatMessage, GenParams, Loaded, STOP_EPOCH};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager};
 
@@ -56,9 +59,15 @@ pub struct ModelFile {
 #[tauri::command]
 pub fn llm_list(app: AppHandle) -> Result<Vec<ModelFile>, String> {
     let mut out = Vec::new();
+    let downloading = !downloads().lock().unwrap().is_empty();
     for entry in fs::read_dir(models_dir(&app)?).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
         let name = entry.file_name().to_string_lossy().to_string();
+        // Leftovers of an interrupted import are useless; downloads keep theirs for resuming.
+        if !downloading && name.ends_with(".gguf.import") {
+            let _ = fs::remove_file(entry.path());
+            continue;
+        }
         if name.ends_with(".gguf") {
             let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
             out.push(ModelFile { file: name, size });
@@ -77,9 +86,14 @@ pub fn llm_delete(app: AppHandle, file: String) -> Result<(), String> {
     Ok(())
 }
 
-static DOWNLOAD_CANCEL: AtomicBool = AtomicBool::new(false);
+/// Cancel flags of running downloads, one per file (so cancelling one doesn't stop another).
+fn downloads() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
+    static D: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
+    D.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 /// Streams a model from `url` into the models folder, reporting bytes written.
+/// An interrupted download is resumed from where it stopped (HTTP Range).
 #[tauri::command]
 pub async fn llm_download(
     app: AppHandle,
@@ -92,34 +106,71 @@ pub async fn llm_download(
     }
     let path = model_path(&app, &file)?;
     let part = path.with_extension("gguf.part");
-    DOWNLOAD_CANCEL.store(false, Ordering::SeqCst);
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut map = downloads().lock().unwrap();
+        if map.contains_key(&file) {
+            return Err("This model is already downloading.".into());
+        }
+        map.insert(file.clone(), cancel.clone());
+    }
+    let res = download_to(&url, &part, &path, &cancel, &on_progress).await;
+    downloads().lock().unwrap().remove(&file);
+    res
+}
 
+async fn download_to(
+    url: &str,
+    part: &PathBuf,
+    path: &PathBuf,
+    cancel: &AtomicBool,
+    on_progress: &Channel<u64>,
+) -> Result<(), String> {
     let client = tauri_plugin_http::reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(20))
+        // A stalled connection (e.g. Wi-Fi to mobile data) ends instead of hanging forever.
+        .read_timeout(Duration::from_secs(40))
         .build()
         .map_err(|e| e.to_string())?;
-    let mut resp = client
-        .get(&url)
+    let have = fs::metadata(part).map(|m| m.len()).unwrap_or(0);
+    let mut req = client.get(url);
+    if have > 0 {
+        req = req.header("Range", format!("bytes={have}-"));
+    }
+    let mut resp = req
         .send()
         .await
         .map_err(|e| format!("Download failed: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("Download failed (HTTP {})", resp.status().as_u16()));
+    let status = resp.status().as_u16();
+    if !(200..300).contains(&status) {
+        if status == 416 {
+            let _ = fs::remove_file(part);
+        }
+        return Err(format!("Download failed (HTTP {status}). Please try again."));
     }
-    let total = resp.content_length().unwrap_or(0);
-    let mut out = fs::File::create(&part).map_err(|e| e.to_string())?;
-    let mut written: u64 = 0;
-    let mut last_report: u64 = 0;
+    let resumed = status == 206 && have > 0;
+    let mut written: u64 = if resumed { have } else { 0 };
+    let total = resp.content_length().map(|l| l + written).unwrap_or(0);
+    let mut out = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(resumed)
+        .truncate(!resumed)
+        .open(part)
+        .map_err(|e| e.to_string())?;
+    let _ = on_progress.send(written);
+    let mut last_report: u64 = written;
     loop {
-        if DOWNLOAD_CANCEL.load(Ordering::SeqCst) {
+        if cancel.load(Ordering::SeqCst) {
             drop(out);
-            let _ = fs::remove_file(&part);
+            let _ = fs::remove_file(part);
             return Err("Download cancelled.".into());
         }
         match resp.chunk().await {
             Ok(Some(chunk)) => {
                 if let Err(e) = out.write_all(&chunk) {
                     drop(out);
-                    let _ = fs::remove_file(&part);
+                    let _ = fs::remove_file(part);
                     return Err(if e.raw_os_error() == Some(28) {
                         "Not enough free storage on this device for this model.".into()
                     } else {
@@ -134,26 +185,31 @@ pub async fn llm_download(
             }
             Ok(None) => break,
             Err(e) => {
-                drop(out);
-                let _ = fs::remove_file(&part);
-                return Err(format!("Download interrupted: {e}"));
+                // Keep the partial file: the next try continues from here.
+                let _ = out.flush();
+                return Err(format!("Download interrupted ({e}). Tap Download again to continue."));
             }
         }
     }
     out.flush().map_err(|e| e.to_string())?;
     drop(out);
     if total > 0 && written != total {
-        let _ = fs::remove_file(&part);
-        return Err("Download was incomplete. Please try again.".into());
+        return Err("Download was incomplete. Tap Download again to continue.".into());
     }
-    fs::rename(&part, &path).map_err(|e| e.to_string())?;
+    fs::rename(part, path).map_err(|e| e.to_string())?;
     let _ = on_progress.send(written);
     Ok(())
 }
 
+/// Cancels the download of `file`, or every download when no file is given.
 #[tauri::command]
-pub fn llm_cancel_download() {
-    DOWNLOAD_CANCEL.store(true, Ordering::SeqCst);
+pub fn llm_cancel_download(file: Option<String>) {
+    let map = downloads().lock().unwrap();
+    for (f, flag) in map.iter() {
+        if file.as_deref().map(|x| x == f).unwrap_or(true) {
+            flag.store(true, Ordering::SeqCst);
+        }
+    }
 }
 
 /// Appends raw bytes to a model file (used to move models downloaded by the
@@ -172,7 +228,7 @@ pub fn llm_import_chunk(app: AppHandle, request: tauri::ipc::Request<'_>) -> Res
         return Err("expected raw bytes".into());
     };
     let path = model_path(&app, &file)?;
-    let part = path.with_extension("gguf.part");
+    let part = path.with_extension("gguf.import");
     let mut f = fs::OpenOptions::new()
         .create(true)
         .write(true)
@@ -195,6 +251,7 @@ pub fn llm_import_chunk(app: AppHandle, request: tauri::ipc::Request<'_>) -> Res
 enum Job {
     Load {
         path: PathBuf,
+        mmproj: Option<PathBuf>,
         n_ctx: u32,
         n_threads: i32,
         reply: mpsc::Sender<Result<(), String>>,
@@ -203,13 +260,19 @@ enum Job {
         messages: Vec<ChatMessage>,
         params: GenParams,
         on_token: Channel<String>,
+        images: Vec<Vec<u8>>,
+        /// Value of STOP_EPOCH when the request was made; a later Stop cancels it.
+        epoch: u64,
         reply: mpsc::Sender<Result<(), String>>,
     },
-    Unload,
+    Unload {
+        reply: Option<mpsc::Sender<()>>,
+    },
 }
 
 static WORKER: OnceLock<Mutex<mpsc::Sender<Job>>> = OnceLock::new();
-static LOADED: Mutex<Option<PathBuf>> = Mutex::new(None);
+/// Model file (and vision file) currently in memory.
+static LOADED: Mutex<Option<(PathBuf, Option<PathBuf>)>> = Mutex::new(None);
 
 fn worker() -> mpsc::Sender<Job> {
     WORKER
@@ -227,10 +290,14 @@ fn worker() -> mpsc::Sender<Job> {
         .clone()
 }
 
+/// Unloads the model if it is `path`, and waits so the file can be deleted (Windows locks mapped files).
 fn unload_if(path: &PathBuf) {
     let loaded = LOADED.lock().unwrap().clone();
-    if loaded.as_ref() == Some(path) {
-        let _ = worker().send(Job::Unload);
+    if loaded.as_ref().map(|(m, v)| m == path || v.as_ref() == Some(path)).unwrap_or(false) {
+        let (tx, rx) = mpsc::channel();
+        if worker().send(Job::Unload { reply: Some(tx) }).is_ok() {
+            let _ = rx.recv_timeout(Duration::from_secs(60));
+        }
         *LOADED.lock().unwrap() = None;
     }
 }
@@ -247,7 +314,11 @@ fn run_worker(rx: mpsc::Receiver<Job>) {
                     Job::Load { reply, .. } | Job::Chat { reply, .. } => {
                         let _ = reply.send(Err(msg.clone()));
                     }
-                    Job::Unload => {}
+                    Job::Unload { reply } => {
+                        if let Some(r) = reply {
+                            let _ = r.send(());
+                        }
+                    }
                 }
             }
             return;
@@ -258,38 +329,83 @@ fn run_worker(rx: mpsc::Receiver<Job>) {
 
     for job in rx {
         match job {
-            Job::Unload => current = None,
+            Job::Unload { reply } => {
+                current = None;
+                if let Some(r) = reply {
+                    let _ = r.send(());
+                }
+            }
             Job::Load {
                 path,
+                mmproj,
                 n_ctx,
                 n_threads,
                 reply,
             } => {
+                // Forget the old model first, so a failed load never leaves a stale "loaded" name.
                 current = None;
+                *LOADED.lock().unwrap() = None;
                 let params = LlamaModelParams::default();
-                let res = LlamaModel::load_from_file(&backend, &path, &params)
-                    .map(|model| {
-                        current = Some(Loaded {
-                            model,
-                            n_ctx,
-                            n_threads,
+                let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    LlamaModel::load_from_file(&backend, &path, &params)
+                }));
+                let res = match res {
+                    Ok(Ok(model)) => {
+                        // Optional "eyes": if they fail, the model still works for text.
+                        let mtmd = mmproj.as_ref().and_then(|mp| {
+                            let params = MtmdContextParams {
+                                use_gpu: false,
+                                print_timings: false,
+                                n_threads,
+                                media_marker: std::ffi::CString::new(mtmd_default_marker()).ok()?,
+                                image_min_tokens: -1,
+                                image_max_tokens: llm_core::image_tokens(n_ctx),
+                            };
+                            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                MtmdContext::init_from_file(&mp.to_string_lossy(), &model, &params)
+                            }));
+                            match r {
+                                Ok(Ok(m)) => Some(m),
+                                _ => None,
+                            }
                         });
-                    })
-                    .map_err(|e| format!("Could not load the model: {e}"));
-                if res.is_ok() {
-                    *LOADED.lock().unwrap() = Some(path);
-                }
+                        let loaded_eyes = if mtmd.is_some() { mmproj.clone() } else { None };
+                        current = Some(Loaded { model, n_ctx, n_threads, mtmd });
+                        *LOADED.lock().unwrap() = Some((path, loaded_eyes));
+                        Ok(())
+                    }
+                    Ok(Err(e)) => Err(format!("Could not load the model: {e}. The file may be damaged; delete it and download again.")),
+                    Err(_) => Err("The on-device engine crashed while loading the model. Try a smaller model.".to_string()),
+                };
                 let _ = reply.send(res);
             }
             Job::Chat {
                 messages,
                 params,
                 on_token,
+                images,
+                epoch,
                 reply,
             } => {
                 let res = match &current {
                     None => Err("No on-device model is loaded.".to_string()),
-                    Some(l) => generate(&backend, l, &messages, &params, &on_token),
+                    Some(l) => {
+                        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            generate(&backend, l, &messages, &params, &images, epoch, &on_token)
+                        }));
+                        match r {
+                            Ok(x) => x,
+                            Err(_) => Err("CRASHED".to_string()),
+                        }
+                    }
+                };
+                let res = if matches!(&res, Err(e) if e == "CRASHED") {
+                    // The model state can't be trusted after a panic: load it again next time.
+                    current = None;
+                    *LOADED.lock().unwrap() = None;
+                    Err("The on-device engine hit an error. Please try again.".to_string())
+                } else {
+                    res
                 };
                 let _ = reply.send(res);
             }
@@ -302,9 +418,11 @@ fn generate(
     l: &Loaded,
     messages: &[ChatMessage],
     params: &GenParams,
+    images: &[Vec<u8>],
+    epoch: u64,
     on_token: &Channel<String>,
 ) -> Result<(), String> {
-    llm_core::generate(backend, l, messages, params, &mut |t| { let _ = on_token.send(t); })
+    llm_core::generate(backend, l, messages, params, images, epoch, &mut |t| { let _ = on_token.send(t); })
 }
 
 fn default_threads() -> i32 {
@@ -316,18 +434,26 @@ fn default_threads() -> i32 {
 }
 
 #[tauri::command]
-pub async fn llm_load(app: AppHandle, file: String, n_ctx: Option<u32>) -> Result<(), String> {
+pub async fn llm_load(app: AppHandle, file: String, n_ctx: Option<u32>, mmproj: Option<String>) -> Result<(), String> {
     let path = model_path(&app, &file)?;
     if !path.exists() {
         return Err("This model is not downloaded yet.".into());
     }
-    if LOADED.lock().unwrap().as_ref() == Some(&path) {
+    let eyes = match mmproj {
+        Some(f) => {
+            let p = model_path(&app, &f)?;
+            if p.exists() { Some(p) } else { None }
+        }
+        None => None,
+    };
+    if LOADED.lock().unwrap().as_ref() == Some(&(path.clone(), eyes.clone())) {
         return Ok(());
     }
     let (reply, rx) = mpsc::channel();
     worker()
         .send(Job::Load {
             path,
+            mmproj: eyes,
             n_ctx: n_ctx.unwrap_or(4096),
             n_threads: default_threads(),
             reply,
@@ -342,14 +468,24 @@ pub async fn llm_load(app: AppHandle, file: String, n_ctx: Option<u32>) -> Resul
 pub async fn llm_chat(
     messages: Vec<ChatMessage>,
     params: GenParams,
+    images: Option<Vec<String>>,
     on_token: Channel<String>,
 ) -> Result<(), String> {
+    use base64::Engine as _;
+    let images: Vec<Vec<u8>> = images
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|b| base64::engine::general_purpose::STANDARD.decode(b).ok())
+        .collect();
     let (reply, rx) = mpsc::channel();
+    let epoch = STOP_EPOCH.load(Ordering::SeqCst);
     worker()
         .send(Job::Chat {
             messages,
             params,
             on_token,
+            images,
+            epoch,
             reply,
         })
         .map_err(|e| e.to_string())?;
@@ -360,7 +496,8 @@ pub async fn llm_chat(
 
 #[tauri::command]
 pub fn llm_stop() {
-    GEN_CANCEL.store(true, Ordering::SeqCst);
+    // Cancels the running generation and any already queued (each remembers the epoch it was asked in).
+    STOP_EPOCH.fetch_add(1, Ordering::SeqCst);
 }
 
 #[tauri::command]
@@ -368,6 +505,7 @@ pub fn llm_info() -> serde_json::Value {
     serde_json::json!({
         "native": true,
         "threads": default_threads(),
-        "loaded": LOADED.lock().unwrap().as_ref().and_then(|p| p.file_name()).map(|f| f.to_string_lossy().to_string()),
+        "loaded": LOADED.lock().unwrap().as_ref().and_then(|(p, _)| p.file_name()).map(|f| f.to_string_lossy().to_string()),
+        "vision": LOADED.lock().unwrap().as_ref().map(|(_, v)| v.is_some()).unwrap_or(false),
     })
 }
