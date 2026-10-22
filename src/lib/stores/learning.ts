@@ -295,14 +295,32 @@ Rules:
  * `ask` sends one prompt to the active model and returns its text.
  */
 export async function learnFromMessage(convId: string, userText: string, ask: (prompt: string) => Promise<string>): Promise<void> {
-  if (!learningEnabled()) return;
+  queueForLearning(convId, userText);
+  await learnNow(convId, ask, isPersonal(userText));
+}
+
+/** A clearly personal fact ("my name is…", "aku tinggal di…"): worth learning right away. */
+export function isPersonal(text: string): boolean {
+  return /\b(my name|call me|i live|i work|i study|i like|i love|i hate|i prefer|my (wife|husband|son|daughter|kid|cat|dog|job|birthday)|nama(ku| saya| aku)|panggil (aku|saya)|(aku|saya|gue|gw) (tinggal|kerja|bekerja|kuliah|sekolah|suka|benci|lebih suka|punya|lahir)|istri(ku| saya)|suami(ku| saya)|anak(ku| saya)|ulang tahun(ku| saya))\b/i.test(text);
+}
+
+/** Remembers a message for the next learning run (cheap; no model call). */
+export function queueForLearning(convId: string, userText: string): void {
+  if (!learningEnabled() || !worthLearning(userText)) return;
   const queue = pendingByConv.get(convId) ?? [];
-  if (worthLearning(userText)) queue.push(userText.slice(0, 600));
-  pendingByConv.set(convId, queue);
-  if (!queue.length || learning) return;
-  // Learn right away only for clearly personal facts; otherwise wait for a few messages.
-  const personal = /\b(my name|call me|i live|i work|i study|i like|i love|i hate|i prefer|my (wife|husband|son|daughter|kid|cat|dog|job|birthday)|nama(ku| saya| aku)|panggil (aku|saya)|(aku|saya|gue|gw) (tinggal|kerja|bekerja|kuliah|sekolah|suka|benci|lebih suka|punya|lahir)|istri(ku| saya)|suami(ku| saya)|anak(ku| saya)|ulang tahun(ku| saya))\b/i.test(userText);
-  if (queue.length < 3 && !personal) return;
+  queue.push(userText.slice(0, 600));
+  // Keep the newest few; older ones would make the prompt too long anyway.
+  pendingByConv.set(convId, queue.slice(-6));
+}
+
+/**
+ * Asks the AI to pull facts out of the queued messages: right away when `personal`,
+ * otherwise once three are waiting. A cancelled or failed run puts them back.
+ */
+export async function learnNow(convId: string, ask: (prompt: string) => Promise<string>, personal = false): Promise<void> {
+  if (!learningEnabled() || learning) return;
+  const queue = pendingByConv.get(convId) ?? [];
+  if (!queue.length || (queue.length < 3 && !personal)) return;
 
   learning = true;
   pendingByConv.set(convId, []);
@@ -317,7 +335,8 @@ export async function learnFromMessage(convId: string, userText: string, ask: (p
       if (n) setLastLearned(n.text);
     }
   } catch {
-    // Learning is best-effort; never disturb the chat.
+    // Cancelled (a new message came) or failed: try these messages again next time.
+    pendingByConv.set(convId, [...queue, ...(pendingByConv.get(convId) ?? [])].slice(-6));
   } finally {
     learning = false;
   }
