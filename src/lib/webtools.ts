@@ -5,7 +5,8 @@
  * Wikipedia as a fallback. In the app, requests go through the native HTTP
  * client (no browser CORS limits); in a plain browser only CORS-friendly sites work.
  */
-import { platformFetch } from "./platform";
+import { platformFetch, isTauri } from "./platform";
+import { hasWebBridge, bridgeGet } from "./webbridge";
 
 export interface WebSource { uri: string; title: string }
 export interface WebContext { text: string; queries: string[]; sources: WebSource[] }
@@ -18,10 +19,13 @@ async function getText(url: string, signal?: AbortSignal, timeoutMs = 9000): Pro
   const onAbort = () => ctl.abort();
   signal?.addEventListener("abort", onAbort);
   try {
-    const res = await platformFetch(url, {
-      signal: ctl.signal,
-      headers: { "User-Agent": UA, Accept: "text/html,application/xhtml+xml,text/plain,application/json;q=0.9,*/*;q=0.5", "Accept-Language": "en,id;q=0.8" },
-    });
+    const headers = { "User-Agent": UA, Accept: "text/html,application/xhtml+xml,text/plain,application/json;q=0.9,*/*;q=0.5", "Accept-Language": "en,id;q=0.8" };
+    if (!isTauri() && hasWebBridge()) {
+      const r = await bridgeGet(url, headers, ctl.signal);
+      if (r.status < 200 || r.status >= 300) throw new Error(`HTTP ${r.status}`);
+      return { text: r.text.slice(0, 1_500_000), type: r.type, url: r.url };
+    }
+    const res = await platformFetch(url, { signal: ctl.signal, headers });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const type = res.headers.get("content-type") ?? "";
     const text = (await res.text()).slice(0, 1_500_000);
