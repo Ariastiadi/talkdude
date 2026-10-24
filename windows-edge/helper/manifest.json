@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "talkdude helper",
+  "version": "1.5.1",
+  "description": "Lets the talkdude app on this computer search the web and read links. Works only for the talkdude page.",
+  "icons": { "128": "icon.png" },
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": { "service_worker": "bg.js" },
+  "content_scripts": [
+    {
+      "matches": ["file:///*/talkdude-edge/index.html*"],
+      "js": ["bridge.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ]
+}
