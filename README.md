@@ -15,6 +15,8 @@
 
 ---
 
+> **New in 1.5.1:** a new Nothing-style logo, and a Windows version that installs even with Smart App Control on (see below).
+>
 > **New in 1.5: the built-in AI can see pictures.** Newer, smarter on-device models (Qwen 3.5), longer memory on phones, “Think” mode and a Run button for code with every AI, a Mac version, and many fixes. In 1.4: “save to memory”, plus files, links and web search with any AI. In 1.1: chat without any API key. talkdude can now download a small AI model once and run it right on your phone or PC. No key, no sign-up, no limits, and it keeps working without internet.
 
 <p align="center">
@@ -80,6 +82,7 @@ Download from [Releases](https://github.com/Ariastiadi/talkdude/releases/latest)
 | Platform | Files |
 |----------|-------|
 | Windows  | `.exe` installer or `.msi` |
+| Windows with Smart App Control | `talkdude-windows-edge-setup.zip`: unzip it and run the setup. It runs talkdude in Microsoft Edge, so Smart App Control doesn't block it, and needs no admin rights. Its built-in AI is slower and can't see pictures. |
 | Mac (Apple Silicon) | `talkdude-macos-arm64.dmg`. It isn't signed with an Apple developer ID yet: the first time, right-click the app → **Open**. |
 | Linux    | `.AppImage`, `.deb` or `.rpm` |
 

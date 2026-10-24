@@ -1,3 +1,7 @@
 node_modules
 dist
 .vscode
+dist-file
+windows-edge/app
+windows-edge/talkdude.ico
+windows-edge/*.exe
