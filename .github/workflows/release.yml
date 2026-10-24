@@ -78,9 +78,6 @@ jobs:
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
 
-      - name: Generate app icons
-        run: bun run tauri icon app-icon.svg
-
       - name: Build Linux app
         run: |
           rm -rf src-tauri/target/release/bundle/
@@ -127,9 +124,6 @@ jobs:
 
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
-
-      - name: Generate app icons
-        run: bun run tauri icon app-icon.svg
 
       # llama.cpp (on-device AI) is compiled with CMake; its Rust bindings need libclang.
       - name: Point bindgen at LLVM
@@ -218,9 +212,6 @@ jobs:
       - name: Set CARGO_HOME
         run: echo "CARGO_HOME=$HOME/.cargo" >> $GITHUB_ENV
 
-      - name: Generate app icons
-        run: bun run tauri icon app-icon.svg
-
       # Signing: uses the ANDROID_* repository secrets when they exist so every
       # release has the same signature (updates install over the old version).
       # Without secrets a throw-away keystore is generated so the build still
@@ -282,6 +273,42 @@ jobs:
             out/*.apk
             out/*.aab
 
+  # Windows version that runs in Microsoft Edge. Smart App Control blocks
+  # unsigned programs; this one installs only the web app, a small Edge helper
+  # extension and shortcuts, so it still installs. Optional: never blocks a release.
+  build-windows-edge:
+    name: Build Windows (Edge)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: |
+          bun install --frozen-lockfile
+          sudo apt-get update
+          sudo apt-get install -y nsis zip
+
+      - name: Build installer
+        run: |
+          npx vite build --base ./ --outDir windows-edge/app
+          cp src-tauri/icons/icon.ico windows-edge/talkdude.ico
+          cd windows-edge
+          makensis -V2 -DVERSION="$(jq -r .version ../src-tauri/tauri.conf.json)" talkdude-edge.nsi
+          mkdir -p ../out
+          zip -9 ../out/talkdude-windows-edge-setup.zip talkdude-windows-edge-setup.exe
+          ls -lh ../out/
+
+      - name: Upload Windows (Edge) artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: talkdude-windows-edge
+          path: out/*
+
   # Apple Silicon Macs. Not signed with an Apple developer ID, so the first
   # launch needs right-click → Open. A failure here doesn't block the release.
   build-macos:
@@ -313,9 +340,6 @@ jobs:
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
 
-      - name: Generate app icons
-        run: bun run tauri icon app-icon.svg
-
       - name: Build macOS app
         env:
           # llama.cpp uses C++17 std::filesystem, available from macOS 10.15.
@@ -341,8 +365,8 @@ jobs:
   # (so bumping the version = a new release; Obtainium picks it up).
   release:
     name: Create Release
-    needs: [test, build-linux, build-windows, build-android, build-macos]
-    # macOS is optional; everything else must pass.
+    needs: [test, build-linux, build-windows, build-windows-edge, build-android, build-macos]
+    # macOS and the Edge version are optional; everything else must pass.
     if: ${{ !cancelled() && needs.test.result == 'success' && needs.build-linux.result == 'success' && needs.build-windows.result == 'success' && needs.build-android.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
@@ -387,7 +411,7 @@ jobs:
         if: steps.tag.outputs.skip != '1'
         run: |
           mkdir -p release
-          find artifacts -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' -o -name '*.msi' -o -name '*.exe' -o -name '*.apk' -o -name '*.aab' -o -name '*.dmg' \) -exec mv {} release/ \;
+          find artifacts -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' -o -name '*.msi' -o -name '*.exe' -o -name '*.apk' -o -name '*.aab' -o -name '*.dmg' -o -name '*.zip' \) -exec mv {} release/ \;
           ls -la release/
 
       - name: Create Release
