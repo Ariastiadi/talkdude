@@ -97,3 +97,73 @@ describe("code run", () => {
     expect(runnableLanguage("rust")).toBeNull();
   });
 });
+
+import { resample, rms, SilenceDetector, detectLang, cleanForSpeech, splitForSpeech, cleanTranscript, concatAudio } from "../../src/lib/voice/audio";
+
+describe("voice audio", () => {
+  test("resample 48k to 16k keeps duration and level", () => {
+    const sine = Float32Array.from({ length: 48000 }, (_, i) => Math.sin((2 * Math.PI * 440 * i) / 48000) * 0.5);
+    const out = resample(sine, 48000);
+    expect(out.length).toBe(16000);
+    expect(Math.abs(rms(out) - rms(sine))).toBeLessThan(0.05);
+  });
+  test("resample same rate is a no-op", () => {
+    const a = new Float32Array([0.1, 0.2]);
+    expect(resample(a, 16000)).toBe(a);
+  });
+  test("concat", () => expect(Array.from(concatAudio([new Float32Array([1]), new Float32Array([2, 3])]))).toEqual([1, 2, 3]));
+  test("silence detector ends a turn after speech then quiet", () => {
+    const d = new SilenceDetector({ endSilence: 1, minSpeech: 0.2 });
+    const states: string[] = [];
+    for (let i = 0; i < 10; i++) states.push(d.push(0.002, 0.1)); // room noise
+    for (let i = 0; i < 10; i++) states.push(d.push(0.1, 0.1)); // talking
+    for (let i = 0; i < 12; i++) states.push(d.push(0.002, 0.1)); // quiet
+    expect(states.slice(0, 10).every((s) => s === "waiting")).toBe(true);
+    expect(states).toContain("speaking");
+    expect(states[states.length - 1]).toBe("done");
+  });
+  test("silence detector gives up without speech", () => {
+    const d = new SilenceDetector({ maxWait: 2 });
+    let s = "";
+    for (let i = 0; i < 25; i++) s = d.push(0.001, 0.1);
+    expect(s).toBe("nothing");
+  });
+  test("steady noise is not speech", () => {
+    const d = new SilenceDetector({ maxWait: 3 });
+    let s = "";
+    for (let i = 0; i < 35; i++) s = d.push(0.008 + (i % 2) * 0.001, 0.1);
+    expect(s).toBe("nothing");
+  });
+});
+
+describe("voice text", () => {
+  test("language guess", () => {
+    expect(detectLang("Halo, apa kabar? Saya ingin tahu cara membuat nasi goreng yang enak.")).toBe("id");
+    expect(detectLang("What is the weather like in Jakarta today?")).toBe("en");
+    expect(detectLang("Bagaimana menurutmu tentang film itu?")).toBe("id");
+  });
+  test("markdown cleaned for speech", () => {
+    const t = cleanForSpeech("## Title\n**Bold** and `code` and [a link](https://x.y).\n```js\nconsole.log(1)\n```\n- item one\nSee https://example.com [1] 😀");
+    expect(t).not.toMatch(/[#*`]|https?:|😀|\[1\]/);
+    expect(t).toContain("Bold and code and a link.");
+    expect(t).toContain("(code)");
+    expect(t).toContain("item one");
+  });
+  test("think blocks are not read", () => expect(cleanForSpeech("<think>hidden</think>Answer")).toBe("Answer"));
+  test("long text split at sentences", () => {
+    const text = Array.from({ length: 30 }, (_, i) => `Sentence number ${i} is here.`).join(" ");
+    const parts = splitForSpeech(text, 120);
+    expect(parts.every((p) => p.length <= 120)).toBe(true);
+    expect(parts.join(" ")).toBe(text);
+  });
+  test("very long sentence split", () => {
+    const parts = splitForSpeech("word ".repeat(200).trim(), 100);
+    expect(parts.every((p) => p.length <= 101)).toBe(true);
+    expect(parts.join(" ").split(" ").length).toBe(200);
+  });
+  test("whisper silence hallucinations dropped", () => {
+    expect(cleanTranscript(" Terima kasih telah menonton! ")).toBe("");
+    expect(cleanTranscript("[Music]")).toBe("");
+    expect(cleanTranscript("  Halo   dunia ")).toBe("Halo dunia");
+  });
+});
