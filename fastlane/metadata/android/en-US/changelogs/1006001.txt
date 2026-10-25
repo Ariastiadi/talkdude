@@ -1,0 +1,1 @@
+Fixes: edited messages keep the right versions, short notes no longer replace detailed ones, blocked or empty answers are explained, Stop also stops web lookups, backup restore no longer duplicates messages, safer voice chat.
