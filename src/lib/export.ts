@@ -195,9 +195,9 @@ export async function exportBackup(): Promise<SaveResult> {
 }
 
 /**
- * Restores a backup. Existing records with the same id are overwritten;
- * everything else is kept, so restoring is additive and safe to repeat.
- * Returns the number of conversations restored.
+ * Restores a backup. Chats from the backup replace the same chats on this device,
+ * unless the chat here changed after the backup was made (then it is kept). Other
+ * chats are kept, so restoring is safe to repeat. Returns the number of chats restored.
  */
 export async function importBackup(file: File): Promise<number> {
   const text = await file.text();
@@ -207,10 +207,25 @@ export async function importBackup(file: File): Promise<number> {
     throw new Error("This file is not a valid talkdude backup.");
   }
   let restoredNotes: unknown = null;
+  let restoredCount = 0;
   await db.transaction("rw", [db.conversations, db.messages, db.messageBranches, db.customInstructions, db.characters, db.settings], async () => {
-    await db.conversations.bulkPut(data.conversations!);
-    await db.messages.bulkPut(data.messages!);
-    if (Array.isArray(data.messageBranches)) await db.messageBranches.bulkPut(data.messageBranches);
+    // Per chat: keep the copy on this device if it changed after the backup was made;
+    // otherwise replace it completely, so edited or regenerated messages don't come back twice.
+    const restore = new Set<string>();
+    for (const c of data.conversations!) {
+      if (!c || typeof c.id !== "string") continue;
+      const local = await db.conversations.get(c.id);
+      if (local && (local.updatedAt ?? 0) > (c.updatedAt ?? 0)) continue;
+      restore.add(c.id);
+      if (local) {
+        await db.messages.where("conversationId").equals(c.id).delete();
+        await db.messageBranches.where("conversationId").equals(c.id).delete();
+      }
+    }
+    restoredCount = restore.size;
+    await db.conversations.bulkPut(data.conversations!.filter((c) => restore.has(c?.id)));
+    await db.messages.bulkPut(data.messages!.filter((m) => restore.has(m?.conversationId)));
+    if (Array.isArray(data.messageBranches)) await db.messageBranches.bulkPut(data.messageBranches.filter((b) => restore.has(b?.conversationId)));
     if (Array.isArray(data.customInstructions)) await db.customInstructions.bulkPut(data.customInstructions);
     if (Array.isArray(data.characters)) await db.characters.bulkPut(data.characters);
     if (Array.isArray(data.settings)) {
@@ -228,5 +243,5 @@ export async function importBackup(file: File): Promise<number> {
     }
   });
   if (restoredNotes) await mergeNotes(restoredNotes);
-  return data.conversations!.length;
+  return restoredCount;
 }

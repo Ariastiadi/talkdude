@@ -14,6 +14,8 @@ export interface WebContext { text: string; queries: string[]; sources: WebSourc
 const UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36";
 
 async function getText(url: string, signal?: AbortSignal, timeoutMs = 9000): Promise<{ text: string; type: string; url: string }> {
+  // Already stopped: don't start another request.
+  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), timeoutMs);
   const onAbort = () => ctl.abort();
