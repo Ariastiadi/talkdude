@@ -48,6 +48,7 @@ export default function VoiceMode(props: { onClose: () => void }) {
   let alive = true;
   let running = false;
   let camToken = 0;
+  let stoppedByUser = false;
 
   const stopCamera = () => {
     camToken++;
@@ -149,6 +150,7 @@ export default function VoiceMode(props: { onClose: () => void }) {
           break;
         }
         const before = messages.length;
+        stoppedByUser = false;
         // sendMessage resolves when the answer has finished (or failed / was stopped).
         await sendMessage(text);
         // The answer is saved a moment later.
@@ -157,7 +159,8 @@ export default function VoiceMode(props: { onClose: () => void }) {
         const last = messages.length - 1;
         const reply = last >= before ? replyText(last) : "";
         if (!reply) {
-          setError(chatError() ?? (isStreaming() ? "The answer is still coming. Tap to talk again." : "No answer came back."));
+          if (stoppedByUser) setError(null);
+          else setError(chatError() ?? (isStreaming() ? "The answer is still coming. Tap to talk again." : "No answer came back."));
           setPhase("paused");
           break;
         }
@@ -176,7 +179,7 @@ export default function VoiceMode(props: { onClose: () => void }) {
     const p = phase();
     if (p === "listening") endTurn?.();
     else if (p === "speaking") stopSpeaking();
-    else if (p === "thinking") stopStreaming();
+    else if (p === "thinking") { stoppedByUser = true; stopStreaming(); }
     else if (p === "paused") void loop();
   };
 
