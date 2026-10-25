@@ -8,6 +8,7 @@ Google Gemini, Claude, OpenAI, Groq, OpenRouter's free models, DeepSeek, Mistral
 
 <b>Features</b>
 • Memory like the big chat apps: say "save to memory", see and edit everything it learned, Undo any save
+• Talk instead of typing (Whisper runs on your phone), hear answers read aloud, or use hands-free voice chat with the camera
 • Attach pictures, PDF, Word, text and code files to any AI
 • Web search and link reading for every AI, no key needed
 • Think mode and a Run button for JavaScript and Python code
