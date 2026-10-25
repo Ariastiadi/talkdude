@@ -65,7 +65,7 @@ Function StrRepFn
   Exch $R0
 FunctionEnd
 
-Page directory
+
 Page instfiles
 UninstPage uninstConfirm
 UninstPage instfiles
