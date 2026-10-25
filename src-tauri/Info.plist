@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>talkdude listens only while you use voice input or voice chat, and turns your voice into text on this Mac.</string>
+  <key>NSCameraUsageDescription</key>
+  <string>In voice chat you can turn on the camera so the AI can see what you show it.</string>
+</dict>
+</plist>
