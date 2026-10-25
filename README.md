@@ -15,6 +15,8 @@
 
 ---
 
+> **1.6.1:** fixes for edited-message versions, memory notes, blocked answers, Stop during web search, backup restore and voice chat.
+>
 > **New in 1.6: talk to any AI.** Speak instead of typing, have answers read aloud, or switch to a hands-free **voice chat** (optionally with the camera on, so the AI sees what you show it). Your voice is turned into text on your device with Whisper, in Indonesian or English.
 >
 > **New in 1.5.1:** a new Nothing-style logo, and a Windows version that installs even with Smart App Control on (see below).
