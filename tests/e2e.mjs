@@ -179,6 +179,53 @@ await page.locator(".voice-mode button", { hasText: "Not now" }).click();
 await wait(200);
 check("voice chat closes", (await page.locator(".voice-mode").count()) === 0);
 
+// 8. Edited message versions stay right after leaving the chat and coming back
+const newChat = () => page.locator(".chat-topbar md-icon-button", { has: page.locator("md-icon", { hasText: "edit_square" }) }).click();
+await newChat();
+await wait(400);
+nextReply = "Reply A.";
+await send("Version test question one");
+await page.locator(".message-user").last().hover();
+await page.locator(".message-user").last().locator("md-icon-button", { has: page.locator("md-icon", { hasText: /^edit$/ }) }).click();
+await page.locator("textarea").first().fill("Version test question two");
+nextReply = "Reply B.";
+await page.keyboard.press("Enter");
+await wait(1800);
+const indicator = () => page.locator(".message-user .branch-indicator").last().innerText().catch(() => "");
+check("edit makes 2 versions", (await indicator()) === "2/2", await indicator());
+const branchBtn = (icon) => page.locator(".message-user .branch-nav md-icon-button", { has: page.locator("md-icon", { hasText: icon }) }).last();
+await branchBtn("chevron_left").click();
+await wait(800);
+check("previous version shown", (await indicator()) === "1/2", await indicator());
+await branchBtn("chevron_right").click();
+await wait(800);
+check("back to the newest version", (await indicator()) === "2/2", await indicator());
+nextReply = "Follow-up reply.";
+await send("A follow-up message");
+// Reopen the app (state is rebuilt from the database) and open the chat again
+await page.reload();
+await wait(1500);
+if ((await page.locator(".message-user").count()) === 0) {
+  await page.locator(".sidebar-toggle").click();
+  await wait(500);
+  // The newest chat is listed first (titles come from the mocked AI, so don't match on them).
+  await page.locator(".conversation-item").first().click();
+  await wait(800);
+}
+check("versions still 2/2 after reopening", (await indicator()) === "2/2", await indicator());
+check("follow-up kept on the current version", (await page.locator(".message-model").last().innerText()).includes("Follow-up reply."));
+
+// 9. A shorter note doesn't replace a more detailed one
+nextReply = "Noted.";
+await send("Save to memory: I work at Bank Mega as an independent commissioner and chair the risk monitoring committee");
+await send("Save to memory: I work at a bank");
+check("detailed note kept", (await page.locator(".snackbar").innerText().catch(() => "")).includes("Bank Mega"), await page.locator(".snackbar").innerText().catch(() => ""));
+
+// 10. An empty answer (e.g. blocked by the provider) is explained, not silent
+nextReply = "";
+await send("This gets an empty answer");
+check("empty answer explained", (await page.locator("body").innerText()).includes("empty answer"));
+
 check("no page errors", errors.length === 0, errors.join(" | "));
 await browser.close();
 server.kill();
