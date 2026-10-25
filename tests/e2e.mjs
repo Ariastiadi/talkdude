@@ -55,6 +55,12 @@ const send = async (text, ms = 1800) => {
   await wait(ms);
 };
 
+// Headless Chromium has no voices: a fake speech synthesis records what is read aloud.
+await page.addInitScript(() => {
+  window.__spoken = [];
+  const fake = { speak(u) { window.__spoken.push(u.text); setTimeout(() => u.onend && u.onend(), 50); }, cancel() {}, getVoices() { return []; } };
+  Object.defineProperty(window, "speechSynthesis", { value: fake, configurable: true });
+});
 await page.goto(`http://localhost:${PORT}/`);
 await wait(1200);
 await page.getByText("Other providers").click();
@@ -145,6 +151,33 @@ nextReply = "Got it!\n[[remember: The user's sister is called Rina]]";
 await send("Please keep in mind my sister is called Rina");
 check("remember tag hidden", !(await page.locator(".message-model").last().innerText()).includes("[[remember"));
 check("remember tag saved", (await page.locator(".snackbar").innerText().catch(() => "")).includes("Rina"));
+
+// 7. Voice: read aloud, and the mic asks for the one-time download first
+nextReply = "**Hello** there! Visit https://example.com for more.";
+await send("Say hello");
+await page.locator(".message-model .read-aloud-btn").last().click();
+await wait(500);
+const spoken = await page.evaluate(() => window.__spoken.join(" "));
+check("read aloud speaks clean text", spoken.includes("Hello there!") && !spoken.includes("**") && !spoken.includes("https"), spoken);
+await page.evaluate(() => localStorage.setItem("talkdude_tts_auto", "1"));
+await page.reload();
+await wait(1500);
+await page.evaluate(() => { window.__spoken = []; });
+nextReply = "Auto reading works.";
+await send("Read this one aloud automatically");
+await wait(800);
+check("answers read aloud automatically", (await page.evaluate(() => window.__spoken.join(" "))).includes("Auto reading works."));
+await page.evaluate(() => localStorage.setItem("talkdude_tts_auto", "0"));
+await page.locator(".mic-btn").click();
+await wait(300);
+check("mic offers the voice download", (await page.locator(".voice-banner .voice-setup").count()) === 1);
+await page.locator(".voice-banner button", { hasText: "Not now" }).click();
+await page.locator(".voice-chat-btn").click();
+await wait(300);
+check("voice chat opens", (await page.locator(".voice-mode .voice-setup").count()) === 1);
+await page.locator(".voice-mode button", { hasText: "Not now" }).click();
+await wait(200);
+check("voice chat closes", (await page.locator(".voice-mode").count()) === 0);
 
 check("no page errors", errors.length === 0, errors.join(" | "));
 await browser.close();
