@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "talkdude helper",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "description": "Lets the talkdude app on this computer search the web and read links. Works only for the talkdude page.",
   "icons": { "128": "icon.png" },
   "host_permissions": ["http://*/*", "https://*/*"],
