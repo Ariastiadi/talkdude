@@ -1,0 +1,122 @@
+.voice-mode {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: var(--md-sys-color-surface);
+  color: var(--md-sys-color-on-surface);
+  padding: max(12px, env(safe-area-inset-top)) 16px max(20px, env(safe-area-inset-bottom));
+  box-sizing: border-box;
+}
+.voice-top { width: 100%; max-width: 640px; display: flex; align-items: center; justify-content: space-between; }
+.voice-title { font-family: var(--td-dot-font); letter-spacing: 0.04em; }
+.voice-stage {
+  flex: 1;
+  width: 100%;
+  max-width: 640px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  min-height: 200px;
+}
+.voice-stage.with-camera { align-items: flex-end; }
+.voice-video {
+  position: absolute;
+  inset: 8px 0 72px;
+  width: 100%;
+  height: calc(100% - 80px);
+  object-fit: cover;
+  border-radius: 24px;
+  background: #000;
+}
+.voice-orb {
+  --lvl: 0;
+  position: relative;
+  width: 168px;
+  height: 168px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  background: var(--md-sys-color-surface-container-high);
+  transform: scale(calc(1 + var(--lvl) * 0.18));
+  transition: transform 90ms linear, background 200ms;
+  -webkit-tap-highlight-color: transparent;
+}
+.with-camera .voice-orb { width: 96px; height: 96px; margin-bottom: 8px; }
+.voice-orb-dots {
+  position: absolute;
+  inset: 18%;
+  border-radius: 50%;
+  background-image: radial-gradient(circle, var(--td-dot) 32%, transparent 36%);
+  background-size: 12px 12px;
+  opacity: 0.85;
+}
+.voice-orb.phase-listening { background: var(--td-accent); }
+.voice-orb.phase-listening .voice-orb-dots { background-image: radial-gradient(circle, #fff 32%, transparent 36%); }
+.voice-orb.phase-thinking .voice-orb-dots,
+.voice-orb.phase-transcribing .voice-orb-dots { animation: voice-pulse 1.1s ease-in-out infinite; }
+.voice-orb.phase-speaking { background: var(--md-sys-color-primary-container); }
+.voice-orb.phase-paused { opacity: 0.6; }
+@keyframes voice-pulse { 50% { opacity: 0.3; } }
+.voice-status { margin: 12px 0 4px; text-align: center; min-height: 1.5em; }
+.voice-transcript {
+  width: 100%;
+  max-width: 640px;
+  max-height: 30vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: center;
+}
+.voice-heard { color: var(--md-sys-color-on-surface-variant); }
+.voice-answer { white-space: pre-wrap; }
+.voice-note { color: var(--md-sys-color-on-surface-variant); }
+.voice-error { color: var(--md-sys-color-error); }
+.voice-controls { display: flex; align-items: center; gap: 20px; margin-top: 16px; }
+.voice-end {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  border: none;
+  background: var(--td-accent);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.voice-setup-wrap { flex: 1; display: flex; align-items: center; width: 100%; max-width: 480px; }
+.voice-setup {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: 16px;
+  padding: 14px 16px;
+  background: var(--md-sys-color-surface-container-low);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.voice-setup-title { display: flex; align-items: center; gap: 8px; }
+.voice-setup-text { margin: 0; color: var(--md-sys-color-on-surface-variant); }
+.voice-setup-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.voice-setup-error { color: var(--md-sys-color-error); }
+
+/* Composer: dictation */
+.mic-btn.recording { color: var(--td-accent); }
+.mic-level {
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  border: 2px solid var(--td-accent);
+  pointer-events: none;
+  transform: scale(calc(1 + var(--lvl, 0) * 0.35));
+  transition: transform 90ms linear;
+}
+.mic-anchor { position: relative; display: inline-flex; }
+.voice-banner { margin: 0 12px 8px; }
+.dictation-status { display: flex; align-items: center; gap: 6px; padding: 0 12px 6px; color: var(--md-sys-color-on-surface-variant); }

@@ -20,6 +20,11 @@ import { notes, learningEnabled, setLearningEnabled, addNote, updateNote, delete
 import { testProvider, fetchModels } from "../lib/api/providers";
 import { persona, setPersona } from "../lib/stores/characters";
 import { platformOpenUrl } from "../lib/platform";
+import {
+  STT_MODELS, sttModelKey, setSttModelKey, sttReady, sttProgress, sttSupported, deleteStt, ORT_WASM_BYTES,
+} from "../lib/voice/stt";
+import { autoRead, setAutoRead, speechRate, setSpeechRate, speak, ttsSupported } from "../lib/voice/tts";
+import VoiceSetupCard from "./VoiceSetup";
 import "./SettingsDialog.css";
 
 const AISTUDIO_KEY_URL = "https://aistudio.google.com/app/apikey";
@@ -30,6 +35,7 @@ const TABS: { key: SettingsTab; label: string }[] = [
   { key: "providers", label: "Providers" },
   { key: "persona", label: "Persona" },
   { key: "memory", label: "Memory" },
+  { key: "voice", label: "Voice" },
   { key: "appearance", label: "Look" },
 ];
 
@@ -56,6 +62,7 @@ export default function SettingsDialog() {
           <div class="settings-body">
             <Show when={tab() === "device"}><DeviceTab /></Show>
             <Show when={tab() === "memory"}><MemoryTab /></Show>
+            <Show when={tab() === "voice"}><VoiceTab /></Show>
             <Show when={tab() === "gemini"}><GeminiTab /></Show>
             <Show when={tab() === "providers"}><ProvidersTab /></Show>
             <Show when={tab() === "persona"}><PersonaTab /></Show>
@@ -491,6 +498,64 @@ function AppearanceTab() {
           )}
         </For>
       </div>
+    </div>
+  );
+}
+
+// === Voice Tab ===
+
+function VoiceTab() {
+  const [confirmDelete, setConfirmDelete] = createSignal(false);
+  const ready = () => sttReady().includes(sttModelKey());
+  return (
+    <div class="settings-section">
+      <p class="md-typescale-body-medium apikey-dialog-subtitle">
+        Talk instead of typing, hear answers read aloud, or have a whole voice chat (the wave button next to the mic). Works with every AI.
+        Your voice is turned into text on this device; only the text is sent to the AI you chose.
+      </p>
+      <div class="md-typescale-title-small">Voice input</div>
+      <Show when={sttSupported()} fallback={<p class="md-typescale-body-small settings-help">This device doesn't allow microphone recording here.</p>}>
+        <For each={STT_MODELS}>
+          {(m) => (
+            <label class="settings-toggle">
+              <div>
+                <div class="md-typescale-body-large">{m.name}{sttReady().includes(m.key) ? " · downloaded" : ""}</div>
+                <div class="md-typescale-body-small settings-help">{m.note}. {formatSize(m.bytes + ORT_WASM_BYTES)} one-time download.</div>
+              </div>
+              <input type="radio" name="stt-model" checked={sttModelKey() === m.key} disabled={sttProgress() !== null} onChange={() => setSttModelKey(m.key)} />
+            </label>
+          )}
+        </For>
+        <Show when={!ready()}>
+          <VoiceSetupCard />
+        </Show>
+        <Show when={sttReady().length > 0 && sttProgress() === null}>
+          <div class="settings-row">
+            <button type="button" class="td-btn td-btn-danger td-btn-sm" onClick={async () => { if (confirmDelete()) { await deleteStt(); setConfirmDelete(false); } else setConfirmDelete(true); }}>
+              <md-icon>delete</md-icon><span>{confirmDelete() ? "Tap again to remove voice input" : "Remove voice input from this device"}</span>
+            </button>
+          </div>
+        </Show>
+      </Show>
+      <div class="md-typescale-title-small">Read aloud</div>
+      <Show when={ttsSupported()} fallback={<p class="md-typescale-body-small settings-help">No text-to-speech voice was found on this device. On Android, install or turn on a speech engine in Settings → Accessibility → Text-to-speech.</p>}>
+        <label class="settings-toggle">
+          <div>
+            <div class="md-typescale-body-large">Read answers aloud</div>
+            <div class="md-typescale-body-small settings-help">Every new answer is read out. You can always tap the speaker under an answer.</div>
+          </div>
+          <input type="checkbox" checked={autoRead()} onChange={(e) => setAutoRead(e.currentTarget.checked)} />
+          <span class={`toggle-track ${autoRead() ? "on" : ""}`}><span class="toggle-thumb" /></span>
+        </label>
+        <label class="settings-field">
+          <span class="md-typescale-label-medium">Speed: {speechRate().toFixed(1)}×</span>
+          <input type="range" min="0.5" max="2" step="0.1" value={speechRate()} onInput={(e) => setSpeechRate(Number(e.currentTarget.value))} />
+        </label>
+        <div class="settings-row">
+          <button type="button" class="td-btn td-btn-sm" onClick={() => void speak("Halo! Ini suara talkdude.", null, "id")}><md-icon>volume_up</md-icon><span>Test Indonesian</span></button>
+          <button type="button" class="td-btn td-btn-sm" onClick={() => void speak("Hi! This is how talkdude sounds.", null, "en")}><md-icon>volume_up</md-icon><span>Test English</span></button>
+        </div>
+      </Show>
     </div>
   );
 }

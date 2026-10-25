@@ -57,6 +57,11 @@ import { apiKey } from "../lib/stores/auth";
 import { hasUsableAI } from "../lib/stores/ai";
 import { downloadedLocal, downloadProgress, loadingLocal, localModelInfo, DEFAULT_LOCAL_MODEL } from "../lib/api/local";
 import AiSetupCard from "./AiSetup";
+import VoiceMode from "./VoiceMode";
+import VoiceSetupCard from "./VoiceSetup";
+import { startRecording, type Recording } from "../lib/voice/mic";
+import { transcribe, sttDownloaded, sttSupported } from "../lib/voice/stt";
+import { speak, stopSpeaking, speakingId, autoRead, ttsSupported, warmUpVoices } from "../lib/voice/tts";
 import { lastLearned, setLastLearned, memoryNotice, setMemoryNotice } from "../lib/stores/learning";
 import type { Message, MessagePart } from "../lib/db";
 import { AVAILABLE_MODELS, modelSupportsCodeExecution, modelSupportsUrlContext } from "../lib/api/types";
@@ -564,6 +569,90 @@ export default function ChatView() {
     }, 4000);
   };
 
+  // === Voice: dictation, read-aloud, voice chat ===
+
+  const [voiceOpen, setVoiceOpen] = createSignal(false);
+  const [voiceSetup, setVoiceSetup] = createSignal(false);
+  const [dictation, setDictation] = createSignal<"idle" | "starting" | "listening" | "transcribing">("idle");
+  const [micLevel, setMicLevel] = createSignal(0);
+  let dictRec: Recording | null = null;
+  warmUpVoices();
+
+  const insertDictated = (text: string) => {
+    if (!inputRef || !text) return;
+    const cur = inputRef.value;
+    inputRef.value = cur && !/\s$/.test(cur) ? `${cur} ${text}` : cur + text;
+    inputRef.style.height = "auto";
+    inputRef.style.height = Math.min(inputRef.scrollHeight, 200) + "px";
+    inputRef.focus();
+  };
+
+  const cancelDictation = () => {
+    dictRec?.cancel();
+    dictRec = null;
+    setDictation("idle");
+    setMicLevel(0);
+  };
+
+  const finishDictation = async (heardNothing = false) => {
+    const r = dictRec;
+    dictRec = null;
+    if (!r) return;
+    if (heardNothing) { r.cancel(); setDictation("idle"); setMicLevel(0); showSnackbar("Didn't hear anything. Tap the mic and speak."); return; }
+    setDictation("transcribing");
+    try {
+      const audio = await r.stop();
+      const text = audio.length > 1600 ? await transcribe(audio) : "";
+      if (text) insertDictated(text);
+      else showSnackbar("Didn't catch that. Try again a bit closer to the microphone.");
+    } catch (e) {
+      showSnackbar(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDictation("idle");
+      setMicLevel(0);
+    }
+  };
+
+  const toggleDictation = async () => {
+    if (dictation() === "listening") { await finishDictation(); return; }
+    if (dictation() !== "idle") return;
+    if (!sttDownloaded()) { setVoiceSetup(true); return; }
+    stopSpeaking();
+    setDictation("starting");
+    try {
+      const rec = await startRecording({ autoStop: true, silence: { endSilence: 2, maxWait: 15, maxTurn: 120 }, onLevel: (l) => setMicLevel(l) });
+      if (disposed || dictation() !== "starting") { rec.cancel(); return; }
+      dictRec = rec;
+      setDictation("listening");
+      void rec.ended.then((why) => { if (dictRec === rec && why !== "stopped") void finishDictation(why === "nothing"); });
+    } catch (e) {
+      setDictation("idle");
+      showSnackbar(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  let disposed = false;
+  onCleanup(() => { disposed = true; dictRec?.cancel(); dictRec = null; stopSpeaking(); });
+
+  // Read new answers aloud when "Read answers aloud" is on (voice chat does its own reading).
+  // The answer is saved a moment after streaming ends, so wait for it to appear.
+  let readPending: string | null = null; // conversation whose next answer should be read
+  let readAfter = 0; // only answers created after the stream started
+  let lastReadId: string | null = null;
+  createEffect(() => {
+    if (isStreaming() && autoRead() && !readPending) { readPending = untrack(activeConversationId); readAfter = Date.now() - 1000; }
+  });
+  createEffect(() => {
+    const last = messages[messages.length - 1];
+    const id = last?.id;
+    if (!readPending || isStreaming() || !last || last.role !== "model" || id === lastReadId || last.createdAt < readAfter) return;
+    if (untrack(activeConversationId) !== readPending) { readPending = null; return; }
+    readPending = null;
+    lastReadId = id ?? null;
+    if (!untrack(voiceOpen) && ttsSupported()) untrack(() => void speak(messagePlainText(last), last.id));
+  });
+  createEffect(() => { activeConversationId(); readPending = null; stopSpeaking(); });
+
   // Tell the user when talkdude learned something new about them.
   createEffect(() => {
     const t = lastLearned();
@@ -819,6 +908,13 @@ export default function ChatView() {
               </div>
             </Show>
 
+            <Show when={!isUser && ttsSupported() && messagePlainText(msg).trim()}>
+              <md-icon-button class={`action-btn read-aloud-btn ${speakingId() === msg.id ? "speaking" : ""}`} type="button"
+                aria-label={speakingId() === msg.id ? "Stop reading" : "Read aloud"}
+                onClick={() => speakingId() === msg.id ? stopSpeaking() : void speak(messagePlainText(msg), msg.id)}>
+                <md-icon>{speakingId() === msg.id ? "stop_circle" : "volume_up"}</md-icon>
+              </md-icon-button>
+            </Show>
             <md-icon-button class="action-btn" type="button" onClick={() => copyMessageText(msg)}>
               <md-icon>content_copy</md-icon>
             </md-icon-button>
@@ -1036,6 +1132,17 @@ export default function ChatView() {
           </div>
         </Show>
 
+        <Show when={voiceSetup()}>
+          <div class="voice-banner">
+            <VoiceSetupCard onReady={() => { setVoiceSetup(false); void toggleDictation(); }} onCancel={() => setVoiceSetup(false)} />
+          </div>
+        </Show>
+        <Show when={dictation() !== "idle"}>
+          <div class="dictation-status md-typescale-label-medium" aria-live="polite">
+            <md-icon>{dictation() === "transcribing" ? "hourglass_top" : "mic"}</md-icon>
+            <span>{dictation() === "transcribing" ? "Turning your voice into text…" : "Listening… tap the mic when you're done"}</span>
+          </div>
+        </Show>
         <div class="input-row">
           <div class="input-field-wrapper">
             <textarea
@@ -1316,6 +1423,25 @@ export default function ChatView() {
 
           <div class="toolbar-spacer" />
 
+          {/* Voice: talk instead of typing, or a whole voice conversation */}
+          <Show when={sttSupported()}>
+            <md-icon-button type="button" class="voice-chat-btn" aria-label="Voice chat" title="Voice chat: talk and hear answers"
+              disabled={isViewingActiveStream()} onClick={() => { stopSpeaking(); cancelDictation(); setVoiceOpen(true); }}>
+              <md-icon>graphic_eq</md-icon>
+            </md-icon-button>
+            <span class="mic-anchor">
+              <md-icon-button type="button" class={`mic-btn ${dictation() === "listening" ? "recording" : ""}`}
+                aria-label={dictation() === "listening" ? "Stop and write down" : "Speak instead of typing"}
+                disabled={dictation() === "transcribing" || dictation() === "starting" || isViewingActiveStream()}
+                onClick={() => void toggleDictation()}>
+                <md-icon>{dictation() === "listening" ? "stop" : "mic"}</md-icon>
+              </md-icon-button>
+              <Show when={dictation() === "listening"}>
+                <span class="mic-level" style={{ "--lvl": String(Math.min(1, micLevel() * 12)) }} />
+              </Show>
+            </span>
+          </Show>
+
           {/* Send / Stop button */}
           <md-filled-tonal-icon-button
             type="button"
@@ -1333,6 +1459,7 @@ export default function ChatView() {
 
   return (
     <div class="chat-view">
+      <Show when={voiceOpen()}><VoiceMode onClose={() => setVoiceOpen(false)} /></Show>
       <div class="chat-topbar">
         <md-icon-button class="sidebar-toggle" type="button" aria-label="Toggle sidebar" onClick={() => setSidebarOpen((prev) => !prev)}>
           <md-icon>{sidebarOpen() ? "menu_open" : "menu"}</md-icon>
