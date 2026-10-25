@@ -15,6 +15,8 @@
 
 ---
 
+> **New in 1.6: talk to any AI.** Speak instead of typing, have answers read aloud, or switch to a hands-free **voice chat** (optionally with the camera on, so the AI sees what you show it). Your voice is turned into text on your device with Whisper, in Indonesian or English.
+>
 > **New in 1.5.1:** a new Nothing-style logo, and a Windows version that installs even with Smart App Control on (see below).
 >
 > **New in 1.5: the built-in AI can see pictures.** Newer, smarter on-device models (Qwen 3.5), longer memory on phones, “Think” mode and a Run button for code with every AI, a Mac version, and many fixes. In 1.4: “save to memory”, plus files, links and web search with any AI. In 1.1: chat without any API key. talkdude can now download a small AI model once and run it right on your phone or PC. No key, no sign-up, no limits, and it keeps working without internet.
@@ -44,6 +46,7 @@ Your chats are stored only on your device. talkdude has no server of its own.
 - **Small.** The Android APK is about 8 MB, with a fast native llama.cpp engine built in; models are downloaded only if you use them.
 - **Memory, like ChatGPT, Gemini and Claude.** talkdude notes what you tell it about yourself (name, interests, plans, how you like answers), and you can say it out loud too: *“save to memory: I live in Bandung”*, *“ingat ya, aku suka kopi”*, *“forget that”*, or just ask the AI in your own words to keep something in mind. Every save shows an **Undo** button. Notes are matched by topic too (coffee ↔ favourite drink), and the relevant ones go to the AI in every chat, so even the built-in AI gets more personal over time. No limit on notes. See, search, edit or delete everything in Settings → Memory.
 - **Files, links and web search for every AI.** Attach pictures, PDF, Word (.docx), text and code files to any model, including the on-device one. If a model can't see pictures, the picture is left out with a note instead of an error. Switch on **Web search** or **Read links** in the Tools menu and talkdude looks things up itself (DuckDuckGo, DuckDuckGo Lite, then Wikipedia as backups) and hands the results to the AI. No key needed.
+- **Voice for every AI.** Tap the mic to speak instead of typing, tap the speaker under an answer to hear it, or turn on *Read answers aloud*. The wave button starts a **voice chat**: talkdude listens, sends what you said, reads the answer and listens again, hands-free; turn on the camera and the AI also gets a photo of what you show it. Speech recognition is OpenAI's Whisper running on your device (one-time download of about 94 MB; Indonesian and English are detected automatically). Answers are read with the voices already on your phone or PC.
 - **Think mode and Run for every AI.** Tap **Fast/Think** to let any model reason step by step first (shown in a Thinking box). JavaScript and Python code in replies gets a **Run** button; code runs on your device (Python loads once, about 10 MB).
 - **Many providers in one model picker.** Gemini and Gemma, Claude, OpenAI, Groq, OpenRouter, DeepSeek, Mistral, Ollama, or any OpenAI-compatible server.
 - **No chat limits.** talkdude never counts your messages. When a cloud model hits its free-tier limit, the reply continues on the next model you've set up.
@@ -60,6 +63,7 @@ Your chats are stored only on your device. talkdude has no server of its own.
 - Conversations, characters and settings are stored locally (IndexedDB). There is no talkdude account or server.
 - On-device models run entirely on your device. After the one-time download (engine from the jsDelivr npm CDN, checked against a built-in SHA-256 hash; model from Hugging Face), nothing you type leaves the device.
 - When you use a cloud provider, your messages go straight from the app to that provider with your own key, under that provider's privacy policy.
+- Voice input never leaves your device: Whisper turns it into text on the device and only the text goes to the AI you chose. The microphone is on only while the mic or voice chat is active, and the camera only when you turn it on in voice chat. Read-aloud uses your device's own voices (on Windows, Edge's natural voices may use Microsoft's online speech service).
 - Web search and Read links are off until you switch them on. When on, the words you search for are sent to DuckDuckGo (or Wikipedia) and the pages you link are fetched from their websites. Attached files are read on your device and sent only to the AI you chose.
 - No ads, no trackers, no analytics. The code is open for anyone to check.
 
@@ -117,13 +121,12 @@ talkdude is built with [Tauri v2](https://v2.tauri.app/) (Rust) and SolidJS. In 
 
 ```bash
 bun install
-bun run tauri icon app-icon.svg   # regenerate app icons
 bun run tauri dev                 # development build
 bun run tauri build               # desktop release build
 bun run tauri android build --apk # Android
 ```
 
-Tests: `bun run typecheck`, `bun run test` (unit tests) and, after `bun run build`, `bun run test:e2e` (the web app with a mocked AI). GitHub Actions runs them and builds every platform on each push to `main` (see `.github/workflows/release.yml`). When the `version` in `src-tauri/tauri.conf.json` has no release yet, a new GitHub Release is published with the APKs, EXE/MSI and AppImage/DEB/RPM.
+Tests: `bun run typecheck`, `bun run test` (unit tests) and, after `bun run build`, `bun run test:e2e` (the web app with a mocked AI). `node tests/voice.mjs` tests voice input with the real Whisper model (point `WHISPER_DIR` at a downloaded copy of onnx-community/whisper-base). GitHub Actions runs them and builds every platform on each push to `main` (see `.github/workflows/release.yml`). When the `version` in `src-tauri/tauri.conf.json` has no release yet, a new GitHub Release is published with the APKs, EXE/MSI and AppImage/DEB/RPM.
 
 ## License
 

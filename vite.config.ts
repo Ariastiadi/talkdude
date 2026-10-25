@@ -16,6 +16,11 @@ const compatWasm = readFileSync("node_modules/@wllama/wllama-compat/wasm/wllama.
 const compatJs = readFileSync("node_modules/@wllama/wllama-compat/wasm/wllama.js");
 const sha256 = (b: Buffer) => createHash("sha256").update(b).digest("hex");
 
+// Voice input (Whisper via Transformers.js): the ONNX Runtime WebAssembly file
+// (~14 MB) is also downloaded on first use and checked against this hash.
+const ortPkg = JSON.parse(readFileSync("node_modules/onnxruntime-web/package.json", "utf-8"));
+const ortWasm = readFileSync("node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm");
+
 // KaTeX ships every font as woff2 + woff + ttf; WebViews only need woff2.
 const katexWoff2Only = {
   name: "katex-woff2-only",
@@ -26,9 +31,20 @@ const katexWoff2Only = {
   },
 };
 
+// ONNX Runtime refers to its 14 MB .wasm with new URL(..., import.meta.url), which
+// would copy it into the app. talkdude downloads it on first use instead (stt.ts).
+const ortNoWasmAsset = {
+  name: "ort-no-wasm-asset",
+  enforce: "pre" as const,
+  transform(code: string, id: string) {
+    if (!id.includes("onnxruntime-web")) return null;
+    return code.replace(/new URL\("ort-wasm-simd-threaded(\.[a-z]+)?\.wasm",\s*import\.meta\.url\)\.href/g, '"ort-wasm-simd-threaded.wasm"');
+  },
+};
+
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-  plugins: [katexWoff2Only, solid()],
+  plugins: [katexWoff2Only, ortNoWasmAsset, solid()],
 
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
@@ -39,7 +55,18 @@ export default defineConfig(async () => ({
     __WLLAMA_COMPAT_WASM_SIZE__: String(compatWasm.length),
     __WLLAMA_COMPAT_JS_SHA256__: JSON.stringify(sha256(compatJs)),
     __WLLAMA_COMPAT_JS_SIZE__: String(compatJs.length),
+    __ORT_VERSION__: JSON.stringify(ortPkg.version),
+    __ORT_WASM_SHA256__: JSON.stringify(sha256(ortWasm)),
+    __ORT_WASM_SIZE__: String(ortWasm.length),
   },
+
+  resolve: {
+    // Transformers.js imports the WebGPU build of ONNX Runtime; talkdude only
+    // needs the plain CPU (WebAssembly) build, which is much smaller.
+    alias: { "onnxruntime-web/webgpu": "onnxruntime-web/wasm" },
+  },
+
+  worker: { format: "es" as const, plugins: () => [ortNoWasmAsset] },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

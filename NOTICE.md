@@ -52,6 +52,14 @@ Model weights are not bundled. They are downloaded on request from Hugging Face 
 
 PDF text is read with [PDF.js](https://github.com/mozilla/pdf.js) by Mozilla and contributors, licensed under the Apache License 2.0. It is loaded only when you attach a PDF.
 
+## Voice: Transformers.js, ONNX Runtime and Whisper
+
+Voice input uses [Transformers.js](https://github.com/huggingface/transformers.js) (Apache License 2.0, © Hugging Face) with [ONNX Runtime Web](https://github.com/microsoft/onnxruntime) (MIT License, © Microsoft Corporation). The JavaScript is bundled with the app; the ONNX Runtime WebAssembly file is downloaded from the jsDelivr CDN on first use and checked against a built-in SHA-256 hash.
+
+The speech model is OpenAI's [Whisper](https://github.com/openai/whisper) (MIT License, © OpenAI), in the ONNX conversions published by [onnx-community](https://huggingface.co/onnx-community) on Hugging Face. It is not bundled; it is downloaded when you turn on voice input.
+
+The idea of combining speech input, pictures and spoken answers came from [abuhanifah86/multimodal-AI](https://github.com/abuhanifah86/multimodal-AI) (Whisper + LLaVA + gTTS); no code was taken from it.
+
 ## Pyodide
 
 The **Run** button for Python code uses [Pyodide](https://github.com/pyodide/pyodide) (Mozilla Public License 2.0). It is not bundled with talkdude: it is downloaded from the jsDelivr CDN the first time you run Python code.
