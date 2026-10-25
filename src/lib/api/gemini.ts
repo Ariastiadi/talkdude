@@ -474,8 +474,15 @@ async function streamChatOnce(
       config: sdkConfig,
     });
 
+    let gotOutput = false;
+    let blocked = "";
     for await (const chunk of await stream) {
       const parts: Part[] = chunk.candidates?.[0]?.content?.parts ?? [];
+      if (parts.length) gotOutput = true;
+      const br = (chunk as { promptFeedback?: { blockReason?: string } }).promptFeedback?.blockReason;
+      const fr = chunk.candidates?.[0]?.finishReason as string | undefined;
+      if (br) blocked = br;
+      else if (fr && ["SAFETY", "RECITATION", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "IMAGE_SAFETY"].includes(fr)) blocked = fr;
 
       for (const part of parts) {
         if (part.thought && part.text) {
@@ -518,6 +525,10 @@ async function streamChatOnce(
           thoughtsTokens: (usage as { thoughtsTokenCount?: number }).thoughtsTokenCount,
         });
       }
+    }
+    // A blocked answer arrives as an empty stream; say why instead of showing nothing.
+    if (blocked && !gotOutput) {
+      callbacks.onError?.(`Gemini didn't answer (${blocked.toLowerCase().replace(/_/g, " ")}). Try rephrasing, or turn off the Gemini filter in Settings → Gemini.`);
     }
   } catch (err) {
     // Treat SDK AbortError as a clean stop, not an error.
