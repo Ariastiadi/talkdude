@@ -754,9 +754,10 @@ async function loadBranchState(conversationId: string): Promise<void> {
       const liveSnapshot = msgs.slice(msgs.indexOf(branchMsg));
       const groupBranches = branches.filter((b) => b.branchGroupId === groupId);
       let foundActive = false;
+      // Each version starts with its own copy of the edited message, so the first
+      // message's id identifies the live version even after newer messages were added.
       for (const gb of groupBranches) {
-        if (gb.snapshot.length === liveSnapshot.length &&
-            gb.snapshot.every((s, i) => s.id === liveSnapshot[i].id)) {
+        if (gb.snapshot[0]?.id === liveSnapshot[0]?.id) {
           state[groupId].activeIndex = gb.branchIndex;
           foundActive = true;
           break;
@@ -1601,7 +1602,20 @@ async function startStream(
             .where("branchGroupId").equals(branchCtx.branchGroupId)
             .filter((b) => b.branchIndex === branchCtx.branchIndex)
             .first();
-          if (branchRecord) {
+          // Is this version the one currently stored as the live chat? (The user went to
+          // another chat without switching versions.) Then the reply belongs there too.
+          const liveMsgs = activeConversationId() !== convId
+            ? await db.messages.where("conversationId").equals(convId).sortBy("createdAt")
+            : [];
+          const livePoint = liveMsgs.findIndex((m) => m.branchGroupId === branchCtx!.branchGroupId);
+          const liveIsThisBranch = !!branchRecord && livePoint !== -1 && liveMsgs[livePoint].id === branchRecord.snapshot[0]?.id;
+          if (branchRecord && liveIsThisBranch) {
+            pendingCompletedMessages.set(convId, assistantMsg);
+            await db.messages.put(assistantMsg);
+            // Refresh the saved copy from the live messages (drops a reply that Regenerate replaced).
+            const fresh = [...liveMsgs.slice(livePoint), assistantMsg].sort((a, b) => a.createdAt - b.createdAt);
+            await db.messageBranches.update(branchRecord.id, { snapshot: toPlain(fresh) });
+          } else if (branchRecord) {
             await db.messageBranches.update(branchRecord.id, {
               snapshot: [...branchRecord.snapshot, assistantMsg],
             });
@@ -1684,6 +1698,9 @@ async function startStream(
 
       // Capture viewing state before recovery because recovery mutates activeIndex.
       const wasViewing = isViewing();
+      if (parts.length === 0 && !hadError && stoppedAt === undefined && wasViewing && owned) {
+        setChatError("The AI sent back an empty answer (its provider may have blocked it). Try again, rephrase, or pick another model.");
+      }
 
       if (shouldRecoverBranch) {
         await onErrorRecovery!();
@@ -1726,7 +1743,7 @@ async function startStream(
       });
       if (web.text) systemText = [systemText, web.text].filter(Boolean).join("\n\n");
       if (web.sources.length > 0) groundingResult = { queries: web.queries, sources: web.sources };
-      if (isViewing() && !fullText) setStreamingText("");
+      if (owns() && isViewing() && !fullText) setStreamingText("");
     }
 
     await streamChat(model, contents, generationConfig, systemText, callbacks, controller.signal, tools, { replaceBase: sys.replaceBase });

@@ -147,6 +147,16 @@ function similarity(a: string, b: string): number {
   return inter / Math.min(A.size, B.size);
 }
 
+/** True when (almost) every word of `a` is also in `b`. */
+function coveredBy(a: string, b: string): boolean {
+  const A = new Set(words(a));
+  const B = new Set(words(b));
+  if (!A.size) return true;
+  let inter = 0;
+  for (const w of A) if (B.has(w)) inter++;
+  return inter / A.size >= 0.9;
+}
+
 // === Editing ===
 
 export async function addNote(text: string): Promise<LearnedNote | null> {
@@ -157,7 +167,12 @@ export async function addNote(text: string): Promise<LearnedNote | null> {
   // Same fact again (or an update of it): replace instead of piling up.
   const dup = list.findIndex((n) => similarity(n.text, t) >= 0.7);
   let note: LearnedNote;
-  if (dup !== -1) {
+  if (dup !== -1 && coveredBy(t, list[dup].text) && words(t).length < words(list[dup].text).length) {
+    // A shorter version of something already known ("works at a bank" after
+    // "works at Bank Mega as …"): keep the more detailed note.
+    note = { ...list[dup], updatedAt: now };
+    list[dup] = note;
+  } else if (dup !== -1) {
     note = { ...list[dup], text: t, updatedAt: now };
     list[dup] = note;
   } else {
